@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- BOOTSTRAP-ORDER GUARD (house bootstrap-guard rule, same contract as prg's
+         003-reporting.xml pre-creating the crw_* tables its views read): MRG is
+         clock-launched and may run on a fresh dcre_man before MRR (the spine
+         owner, R-04) ever executed. The man_ext_status view (003-man-reporting)
+         reads the mandate PROJECTION (000 core) joined to the spine header for
+         the client dimension (SPEC-MANDATES-FLOW R-14: mandate_ref compounds the
+         client), exactly as prg's ext_tx_status derives client from
+         tx_header.client_token. These pre-creates carry MRR's EXACT column set
+         (mrr 001-man-spine.xml), mrg-prefixed changeset ids, MARK_RAN guards:
+         whichever service runs first wins, the other side MARK_RANs. Per-service
+         liquibase history keeps this safe. -->
+
+    <changeSet id="mrg-001-mandate-request-header" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="mandate_request_header"/></not>
+        </preConditions>
+        <createTable tableName="mandate_request_header">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="arrival_id" type="UUID">
+                <constraints nullable="false" unique="true" uniqueConstraintName="uq_man_req_header_arrival"/>
+            </column>
+            <column name="msg_id_raw" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="created_ts" type="VARCHAR(14)"><constraints nullable="false"/></column>
+            <column name="entry_count" type="INT"><constraints nullable="false"/></column>
+            <column name="destination_id" type="VARCHAR(16)"><constraints nullable="false"/></column>
+            <column name="business_date" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="client_token" type="VARCHAR(16)"/>
+            <column name="layout_version" type="INT"><constraints nullable="false"/></column>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="mrg-001-mandate-request-entry" author="dcre">
+        <!-- MndtReqId minting + dup_in_file semantics are MRR's (R-07); mrg only
+             reads mandate_ref + arrival_id from this table to resolve the client
+             for a projection mandate. Shape copied verbatim so a fresh-DB
+             pre-create is byte-equivalent to the owner's and MRR MARK_RANs it. -->
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="mandate_request_entry"/></not>
+        </preConditions>
+        <createTable tableName="mandate_request_entry">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <!-- FK-shaped to mandate_request_header.arrival_id (app-side). -->
+            <column name="arrival_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="sequence" type="INT"><constraints nullable="false"/></column>
+            <column name="record_type" type="VARCHAR(2)"><constraints nullable="false"/></column>
+            <column name="action_code" type="VARCHAR(16)"><constraints nullable="false"/></column>
+            <column name="mandate_ref" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="contract_ref" type="VARCHAR(14)"/>
+            <column name="creditor_account" type="VARCHAR(32)"/>
+            <column name="debtor_account" type="VARCHAR(32)"/>
+            <column name="debtor_branch" type="VARCHAR(16)"/>
+            <column name="debtor_name" type="VARCHAR(70)"/>
+            <column name="currency" type="VARCHAR(3)"><constraints nullable="false"/></column>
+            <column name="max_collection_amount_raw" type="VARCHAR(15)"><constraints nullable="false"/></column>
+            <column name="max_collection_amount" type="DECIMAL(18,2)"><constraints nullable="false"/></column>
+            <column name="frequency" type="VARCHAR(4)"/>
+            <column name="collection_day" type="VARCHAR(2)"/>
+            <column name="start_date" type="VARCHAR(8)"/>
+            <column name="expiry_date" type="VARCHAR(8)"/>
+            <column name="mndt_req_id" type="VARCHAR(35)">
+                <constraints nullable="true" unique="true" uniqueConstraintName="uq_man_req_entry_mndt_req_id"/>
+            </column>
+            <column name="dup_in_file" type="BOOLEAN" defaultValueBoolean="false">
+                <constraints nullable="false"/>
+            </column>
+            <column name="spine_state" type="VARCHAR(16)" defaultValue="RECEIVED">
+                <constraints nullable="false"/>
+            </column>
+            <column name="version" type="BIGINT" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="mandate_request_entry" columnNames="arrival_id, sequence"
+                             constraintName="uq_man_req_entry_arrival_sequence"/>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,34 @@
+# TEST layout: shadows the platform-batch classpath resource of the same name so
+# `spring.config.import: classpath:dcre-exchange-layout.yml` binds these values under test.
+# root -> build/test-exchange (per-client tree materialized there); the mandate state-delta
+# report lands at <root>/<client>/onhost-resp-man/out/<client>_MSD_<window>.txt. The three
+# canonical mandate-capable clients mirror production; FNBT00..FNBT15 is an isolation pool so
+# each scenario draws a distinct configured client (watermark/report rows are client-global,
+# so a shared client would collide).
+dcre:
+  exchange:
+    enabled: true
+    root: ${DCRE_EXCHANGE_ROOT:build/test-exchange}
+    clients:
+      "[FNBCC01]":
+        onhost-resp-man: { out: fnbcc01/onhost-resp-man/out, error: fnbcc01/onhost-resp-man/error, archive: fnbcc01/onhost-resp-man/archive }
+      "[FNBCC02]":
+        onhost-resp-man: { out: fnbcc02/onhost-resp-man/out, error: fnbcc02/onhost-resp-man/error, archive: fnbcc02/onhost-resp-man/archive }
+      "[FNBRF01]":
+        onhost-resp-man: { out: fnbrf01/onhost-resp-man/out, error: fnbrf01/onhost-resp-man/error, archive: fnbrf01/onhost-resp-man/archive }
+      "[FNBT00]": { onhost-resp-man: { out: fnbt00/onhost-resp-man/out, error: fnbt00/onhost-resp-man/error, archive: fnbt00/onhost-resp-man/archive } }
+      "[FNBT01]": { onhost-resp-man: { out: fnbt01/onhost-resp-man/out, error: fnbt01/onhost-resp-man/error, archive: fnbt01/onhost-resp-man/archive } }
+      "[FNBT02]": { onhost-resp-man: { out: fnbt02/onhost-resp-man/out, error: fnbt02/onhost-resp-man/error, archive: fnbt02/onhost-resp-man/archive } }
+      "[FNBT03]": { onhost-resp-man: { out: fnbt03/onhost-resp-man/out, error: fnbt03/onhost-resp-man/error, archive: fnbt03/onhost-resp-man/archive } }
+      "[FNBT04]": { onhost-resp-man: { out: fnbt04/onhost-resp-man/out, error: fnbt04/onhost-resp-man/error, archive: fnbt04/onhost-resp-man/archive } }
+      "[FNBT05]": { onhost-resp-man: { out: fnbt05/onhost-resp-man/out, error: fnbt05/onhost-resp-man/error, archive: fnbt05/onhost-resp-man/archive } }
+      "[FNBT06]": { onhost-resp-man: { out: fnbt06/onhost-resp-man/out, error: fnbt06/onhost-resp-man/error, archive: fnbt06/onhost-resp-man/archive } }
+      "[FNBT07]": { onhost-resp-man: { out: fnbt07/onhost-resp-man/out, error: fnbt07/onhost-resp-man/error, archive: fnbt07/onhost-resp-man/archive } }
+      "[FNBT08]": { onhost-resp-man: { out: fnbt08/onhost-resp-man/out, error: fnbt08/onhost-resp-man/error, archive: fnbt08/onhost-resp-man/archive } }
+      "[FNBT09]": { onhost-resp-man: { out: fnbt09/onhost-resp-man/out, error: fnbt09/onhost-resp-man/error, archive: fnbt09/onhost-resp-man/archive } }
+      "[FNBT10]": { onhost-resp-man: { out: fnbt10/onhost-resp-man/out, error: fnbt10/onhost-resp-man/error, archive: fnbt10/onhost-resp-man/archive } }
+      "[FNBT11]": { onhost-resp-man: { out: fnbt11/onhost-resp-man/out, error: fnbt11/onhost-resp-man/error, archive: fnbt11/onhost-resp-man/archive } }
+      "[FNBT12]": { onhost-resp-man: { out: fnbt12/onhost-resp-man/out, error: fnbt12/onhost-resp-man/error, archive: fnbt12/onhost-resp-man/archive } }
+      "[FNBT13]": { onhost-resp-man: { out: fnbt13/onhost-resp-man/out, error: fnbt13/onhost-resp-man/error, archive: fnbt13/onhost-resp-man/archive } }
+      "[FNBT14]": { onhost-resp-man: { out: fnbt14/onhost-resp-man/out, error: fnbt14/onhost-resp-man/error, archive: fnbt14/onhost-resp-man/archive } }
+      "[FNBT15]": { onhost-resp-man: { out: fnbt15/onhost-resp-man/out, error: fnbt15/onhost-resp-man/error, archive: fnbt15/onhost-resp-man/archive } }
