@@ -1,5 +1,6 @@
 package za.co.fnb.dcre.mrg.data;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -55,6 +56,24 @@ class MndViewBootstrapIT extends AbstractMrgCrdbIT {
                 String.class, "man_%s_resp".formatted(leg));
 
         assertThat(unique).containsExactly("uq_man_%s_resp_file_mndt_req".formatted(leg));
+    }
+
+    /** The request-leg verdict sink is a view source too: same contract, owner is MRV. */
+    @Test
+    void thePreCreatedValidationLogCarriesMrvsExactShape() {
+        final List<String> columns = jdbc.queryForList(
+                "SELECT column_name || ':' || data_type"
+                        + " || COALESCE('(' || character_maximum_length::STRING || ')', '')"
+                        + " FROM information_schema.columns WHERE table_name = 'man_validation_log'"
+                        + " ORDER BY ordinal_position", String.class);
+        final List<String> unique = jdbc.queryForList(
+                "SELECT constraint_name FROM information_schema.table_constraints"
+                        + " WHERE table_name = 'man_validation_log' AND constraint_type = 'UNIQUE'",
+                String.class);
+
+        assertThat(columns).containsExactly("id:uuid", "arrival_id:uuid", "sequence:bigint",
+                "outcome:character varying(32)", "detail:character varying(256)");
+        assertThat(unique).containsExactly("uq_man_validation_arrival_sequence");
     }
 
     @ParameterizedTest

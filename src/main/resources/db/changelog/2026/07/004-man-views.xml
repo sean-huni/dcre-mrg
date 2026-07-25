@@ -15,9 +15,9 @@
          001-man-spine-bootstrap): MRG is clock-launched and may run on a fresh dcre_man
          before MIX/MSX/MPX have ever executed, so each view source is pre-created here
          with a MARK_RAN tableExists guard carrying the owners' EXACT column sets and
-         constraint names (mix/msx/mpx 001-man-<leg>-resp.xml). Whichever service runs
-         first wins; the other side's guarded changesets MARK_RAN. Per-service liquibase
-         history keeps this safe.
+         constraint names (mix/msx/mpx 001-man-<leg>-resp.xml, mrv 001-man-validation-log.xml).
+         Whichever service runs first wins; the other side's guarded changesets MARK_RAN.
+         Per-service liquibase history keeps this safe.
 
          Pick grain is (mndt_req_id), NOT the collections (emission_id, e2e): a pain.012
          message carries exactly ONE mandate, so there is no ISR fan-out to partition.
@@ -103,6 +103,27 @@
         </createTable>
         <addUniqueConstraint tableName="man_pbsr_resp" columnNames="response_file, mndt_req_id"
                              constraintName="uq_man_pbsr_resp_file_mndt_req"/>
+    </changeSet>
+
+    <!-- Same bootstrap-order contract for the REQUEST-leg verdict sink. mnd_ext_status
+         COALESCEs down to MRV's outcome, so man_validation_log is a view source exactly as
+         the three reply tables are, and MRG can migrate a fresh dcre_man before MRV has ever
+         run. Byte-equivalent to the owner's shape (mrv 001-man-validation-log.xml), including
+         the uq_man_validation_arrival_sequence constraint name: MRV's own guarded changeset
+         MARK_RANs against this and vice versa. -->
+    <changeSet id="004-bootstrap-man-validation-log-mrg" author="dcre">
+        <preConditions onFail="MARK_RAN"><not><tableExists tableName="man_validation_log"/></not></preConditions>
+        <createTable tableName="man_validation_log">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="arrival_id" type="UUID"><constraints nullable="false"/></column>
+            <column name="sequence" type="INT"><constraints nullable="false"/></column>
+            <column name="outcome" type="VARCHAR(32)"><constraints nullable="false"/></column>
+            <column name="detail" type="VARCHAR(256)"/>
+        </createTable>
+        <addUniqueConstraint tableName="man_validation_log" columnNames="arrival_id, sequence"
+                             constraintName="uq_man_validation_arrival_sequence"/>
     </changeSet>
 
     <!-- Index-backed pick windows, created BEFORE the views that read them. Collections
@@ -195,10 +216,18 @@
          from tx_header.client_token. stage_rank mirrors prg's: 4 PBSR, 3 SBSR, 2 ISR,
          1 no reply.
 
-         Spine entries whose mndt_req_id is NULL (the first-wins loser of an intra-file
-         duplicate, mrr B1a dup_in_file) surface here as unanswered PDNG rows: this view
-         projects the spine as it stands and does not adjudicate admissibility, which is
-         MRV's request-leg concern. -->
+         The COALESCE ladder bottoms out on the REQUEST-leg verdict before 'PDNG', exactly as
+         collections ext_tx_status bottoms out on validation_log (CTV_PASS / the raw outcome).
+         This arm is REQUIRED, not decorative: mandate_request_entry.mndt_req_id is NULLABLE,
+         and MRR's B1a rule lands the later occurrence of an intra-file (mandate_ref,
+         action_code) duplicate with mndt_req_id NULL + dup_in_file true, for which MRV writes
+         FAIL_DUPLICATE_REF. Such an entry was never assigned a mandate request id, never
+         reached Fintegrate and will NEVER receive a reply on any leg, so a bare 'PDNG' default
+         made it pending FOREVER: MRG could never report it terminal, and the 1:1-live
+         admission check would count it as a live twin and block a legitimate re-registration
+         of that contract. stage_rank stays 1 for an MRV-only row: the verdict is the request
+         leg, not a reply stage. mandate_effective_status (005) maps any non-PASS MRV outcome
+         at rank 1 to RJCT, which is what makes it terminal and not live. -->
 
     <changeSet id="004-mnd-ext-status" author="dcre" runOnChange="true">
         <createView viewName="mnd_ext_status" replaceIfExists="true"><![CDATA[
@@ -211,7 +240,9 @@
                    e.max_collection_amount,
                    e.start_date,
                    e.expiry_date,
-                   COALESCE(pp.status, sp.status, ip.status, 'PDNG') AS raw_status,
+                   COALESCE(pp.status, sp.status, ip.status,
+                            CASE WHEN v.outcome = 'PASS' THEN 'MRV_PASS'
+                                 ELSE v.outcome END, 'PDNG')         AS raw_status,
                    COALESCE(pp.reason, sp.reason, ip.reason)         AS reason,
                    CASE WHEN pp.status IS NOT NULL THEN 4
                         WHEN sp.status IS NOT NULL THEN 3
@@ -219,6 +250,8 @@
                         ELSE 1 END                                   AS stage_rank
             FROM mandate_request_entry e
             JOIN mandate_request_header h ON h.arrival_id = e.arrival_id
+            LEFT JOIN man_validation_log v ON v.arrival_id = e.arrival_id
+                                          AND v.sequence = e.sequence
             LEFT JOIN mnd_isr_pick  ip ON ip.mndt_req_id = e.mndt_req_id
             LEFT JOIN mnd_sbsr_pick sp ON sp.mndt_req_id = e.mndt_req_id
             LEFT JOIN mnd_pbsr_pick pp ON pp.mndt_req_id = e.mndt_req_id

@@ -89,4 +89,51 @@ class MndExtStatusIT extends AbstractMrgCrdbIT {
         assertThat(row.get("start_date")).isEqualTo("20260201");
         assertThat(row.get("expiry_date")).isEqualTo("20270201");
     }
+
+    /**
+     * The request-leg verdict arm, the mandate mirror of collections' ext_tx_status
+     * validation_log arm. mandate_request_entry.mndt_req_id is NULLABLE: MRR's B1a rule lands
+     * the later occurrence of an intra-file (mandate_ref, action_code) duplicate with a NULL
+     * mndt_req_id, and MRV writes FAIL_DUPLICATE_REF. That entry never reached Fintegrate and
+     * can NEVER receive a leg response, so without this arm it reads PDNG forever: MRG would
+     * report it pending indefinitely and the 1:1-live admission check would count it as a live
+     * twin and block a legitimate re-registration of the contract.
+     */
+    @Test
+    void anMrvRejectedDuplicateSurfacesItsVerdictNotPending() {
+        final var arrival = seedSpine("CL01", "MND-7", "MREQ-7");
+        seedDupEntry(arrival, 2, "MND-7");
+        seedVerdict(arrival, 2, "FAIL_DUPLICATE_REF", "duplicate (mandate_ref, action_code) in file");
+
+        final var row = queryOne("SELECT raw_status, stage_rank FROM mnd_ext_status"
+                + " WHERE mandate_ref='MND-7' AND mndt_req_id IS NULL");
+
+        assertThat(row.get("raw_status")).isEqualTo("FAIL_DUPLICATE_REF");
+        assertThat(intOf(row, "stage_rank")).isEqualTo(1);
+    }
+
+    @Test
+    void anMrvPassWithNoRepliesYetSurfacesAsMrvPass() {
+        final var arrival = seedSpine("CL01", "MND-8", "MREQ-8");
+        seedVerdict(arrival, 1, "PASS", null);
+
+        final var row = queryOne("SELECT raw_status, stage_rank FROM mnd_ext_status"
+                + " WHERE mndt_req_id='MREQ-8'");
+
+        assertThat(row.get("raw_status")).isEqualTo("MRV_PASS");
+        assertThat(intOf(row, "stage_rank")).isEqualTo(1);
+    }
+
+    @Test
+    void anyLegReplyOutranksTheMrvVerdict() {
+        final var arrival = seedSpine("CL01", "MND-9", "MREQ-9");
+        seedVerdict(arrival, 1, "PASS", null);
+        seedIsr("MREQ-9", "ACCP", null);
+
+        final var row = queryOne("SELECT raw_status, stage_rank FROM mnd_ext_status"
+                + " WHERE mndt_req_id='MREQ-9'");
+
+        assertThat(row.get("raw_status")).isEqualTo("ACCP");
+        assertThat(intOf(row, "stage_rank")).isEqualTo(2);
+    }
 }

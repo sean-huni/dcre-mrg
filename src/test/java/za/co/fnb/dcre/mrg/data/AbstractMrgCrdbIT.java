@@ -45,12 +45,12 @@ public abstract class AbstractMrgCrdbIT {
     protected JdbcTemplate jdbc;
 
     /** Seeds one MRR spine header + entry, the row source of the mandate view stack. */
-    protected void seedSpine(final String client, final String mandateRef, final String mndtReqId) {
-        seedSpineWithDates(client, mandateRef, mndtReqId, "20260101", "20991231");
+    protected UUID seedSpine(final String client, final String mandateRef, final String mndtReqId) {
+        return seedSpineWithDates(client, mandateRef, mndtReqId, "20260101", "20991231");
     }
 
     /** Same spine seed with explicit CCYYMMDD start/expiry (VARCHAR(8), never DATE). */
-    protected void seedSpineWithDates(final String client, final String mandateRef,
+    protected UUID seedSpineWithDates(final String client, final String mandateRef,
                                       final String mndtReqId, final String startDate,
                                       final String expiryDate) {
         final UUID arrival = UUID.randomUUID();
@@ -65,6 +65,28 @@ public abstract class AbstractMrgCrdbIT {
                         + " mndt_req_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 arrival, 1, "MD", "CREATE", mandateRef, "CTR" + mandateRef, "62000000010",
                 "62000000020", "ZAR", "1000", 10.00, startDate, expiryDate, mndtReqId);
+        return arrival;
+    }
+
+    /**
+     * MRR B1a: the LATER occurrence of an intra-file (mandate_ref, action_code) duplicate is
+     * landed with mndt_req_id NULL and dup_in_file true. It never reaches Fintegrate, so it can
+     * NEVER receive a leg response; only MRV's verdict can ever give it a status.
+     */
+    protected void seedDupEntry(final UUID arrival, final int sequence, final String mandateRef) {
+        jdbc.update("INSERT INTO mandate_request_entry (arrival_id, sequence, record_type, action_code,"
+                        + " mandate_ref, contract_ref, creditor_account, debtor_account, currency,"
+                        + " max_collection_amount_raw, max_collection_amount, start_date, expiry_date,"
+                        + " mndt_req_id, dup_in_file) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,true)",
+                arrival, sequence, "MD", "CREATE", mandateRef, "CTR" + mandateRef, "62000000010",
+                "62000000020", "ZAR", "1000", 10.00, "20260101", "20991231");
+    }
+
+    /** MRV's request-leg verdict sink (man_validation_log), keyed on (arrival_id, sequence). */
+    protected void seedVerdict(final UUID arrival, final int sequence, final String outcome,
+                               final String detail) {
+        jdbc.update("INSERT INTO man_validation_log (arrival_id, sequence, outcome, detail)"
+                + " VALUES (?,?,?,?)", arrival, sequence, outcome, detail);
     }
 
     protected void seedIsr(final String mndtReqId, final String status, final String reason) {
