@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- SCRUM-91: the mandate FSM and its time transitions, computed. This is what R-09
+         specified ("zero clock-driven writers, no sweep job") before the MSR projection
+         and its msrExpiryJob/msrSuspendJob drifted in.
+
+         mandate_override is the ONE surviving writer target in the mandate response leg.
+         It exists only because the suspension signal (N consecutive failed collections)
+         lives in a DIFFERENT database, dcre_col, and a CockroachDB view cannot span
+         databases. Everything else is derived. Keep it that way: do not add columns here
+         to cache derivable state. -->
+
+    <changeSet id="005-mandate-override" author="dcre">
+        <preConditions onFail="MARK_RAN"><not><tableExists tableName="mandate_override"/></not></preConditions>
+        <createTable tableName="mandate_override">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="mandate_ref" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="state" type="VARCHAR(16)"><constraints nullable="false"/></column>
+            <column name="reason" type="VARCHAR(8)"/>
+            <!-- VARCHAR(32), NOT the spec D5 sketch's VARCHAR(16): the spec names
+                 COLLECTION_FAILURE as a source value in the same breath and that is 18
+                 characters, so a 16-wide column rejects the one value the override writer
+                 (Task 7, absorbed from msrSuspendJob) exists to write. Caught red by
+                 MandateEffectiveStatusIT: value too long for type VARCHAR(16). -->
+            <column name="source" type="VARCHAR(32)"><constraints nullable="false"/></column>
+            <column name="effective_from" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="version" type="BIGINT" defaultValueNumeric="0"><constraints nullable="false"/></column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()"><constraints nullable="false"/></column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()"><constraints nullable="false"/></column>
+        </createTable>
+        <!-- FULL business identity (mandate_ref, source): the ON CONFLICT target of the
+             guarded override UPSERT. Never UPSERT on the PK (CRDB resolves that on the PK
+             only). Keying on mandate_ref alone would let an ops override and a collection
+             failure clobber each other. -->
+        <addUniqueConstraint tableName="mandate_override" columnNames="mandate_ref, source"
+                             constraintName="uq_mandate_override_ref_source"/>
+    </changeSet>
+
+    <!-- The FSM, verbatim from MSR's deleted MandateStateMachine. Precedence order in the
+         CASE is load-bearing:
+
+         1. An explicit mandate_override wins outright (R-09: explicit records beat the
+            derived value). It is the only cross-database signal, so nothing derived here
+            can contradict it.
+         2. A leg RJCT/CANC is terminal wherever it came from.
+         3. A REQUEST-leg rejection (stage_rank 1, an MRV outcome that is neither MRV_PASS
+            nor the no-verdict-yet PDNG) is terminal too. This arm covers the MRR B1a
+            dup_in_file entry whose mndt_req_id is NULL: it never reached Fintegrate and can
+            NEVER receive a leg response, so without this it would sit PDNG forever, be
+            reported as pending indefinitely, and be counted as a LIVE twin by the 1:1-live
+            admission check, blocking a legitimate re-registration of that contract. It sits
+            AHEAD of the expiry arm because a request-leg rejection is decided before any
+            date predicate can apply.
+         4. Expiry, as a PREDICATE over the spine's CCYYMMDD VARCHAR(8) (never a written
+            state): to_date guarded against the empty string MRR writes for "no expiry".
+            NOTE (A-64): CTV reads man_ctv_view AS OF SYSTEM TIME, so current_date evaluates
+            at the SNAPSHOT, not wall clock. That is correct for an admissibility gate
+            deciding as of the instant it pinned. Never "fix" this into a written column.
+         5. Only a PBSR ACCP (stage_rank 4) yields ACCP. An ISR or SBSR ACCP means the
+            instruction passed that stage but the debtor has not authenticated yet.
+
+         no_retry derives from the mandate_reason_code reference table's system_action
+         (R-21: codes in tables, never enums), so retry policy is reference-data-driven. -->
+    <changeSet id="005-mandate-effective-status" author="dcre" runOnChange="true">
+        <createView viewName="mandate_effective_status" replaceIfExists="true"><![CDATA[
+            SELECT x.client,
+                   x.mandate_ref,
+                   x.mndt_req_id,
+                   x.contract_ref,
+                   x.debtor_account,
+                   x.creditor_account,
+                   x.max_collection_amount,
+                   x.start_date,
+                   x.expiry_date,
+                   x.raw_status,
+                   x.stage_rank,
+                   CASE
+                     WHEN o.state IS NOT NULL                        THEN o.state
+                     WHEN x.raw_status = 'RJCT'                      THEN 'RJCT'
+                     WHEN x.raw_status = 'CANC'                      THEN 'CANC'
+                     WHEN x.stage_rank = 1
+                          AND x.raw_status NOT IN ('MRV_PASS', 'PDNG')
+                                                                     THEN 'RJCT'
+                     WHEN x.stage_rank = 4 AND x.raw_status = 'ACCP'
+                          AND x.expiry_date IS NOT NULL AND x.expiry_date <> ''
+                          AND to_date(x.expiry_date, 'YYYYMMDD') < current_date
+                                                                     THEN 'EXPIRED'
+                     WHEN x.stage_rank = 4 AND x.raw_status = 'ACCP' THEN 'ACCP'
+                     ELSE 'PDNG'
+                   END AS state,
+                   COALESCE(o.reason, x.reason) AS reason,
+                   COALESCE(rc.system_action IN ('NO_RETRY', 'PERMANENT_FAIL'), false) AS no_retry
+            FROM mnd_ext_status x
+            LEFT JOIN mandate_override o ON o.mandate_ref = x.mandate_ref
+            LEFT JOIN mandate_reason_code rc ON rc.code = COALESCE(o.reason, x.reason)
+        ]]></createView>
+    </changeSet>
+
+    <!-- CRDB CREATE OR REPLACE VIEW cannot reorder or insert columns, and man_ctv_view is
+         being redefined over a different source. Drop it first under a viewExists guard so
+         the upgrade order is deterministic on every CRDB line; the runOnChange changeset
+         below recreates it with an IDENTICAL column list, so CTV needs no code change. -->
+    <changeSet id="005-drop-man-ctv-view-v1" author="dcre">
+        <preConditions onFail="MARK_RAN"><viewExists viewName="man_ctv_view"/></preConditions>
+        <dropView viewName="man_ctv_view"/>
+    </changeSet>
+
+    <changeSet id="005-man-ctv-view-v2" author="dcre" runOnChange="true">
+        <createView viewName="man_ctv_view" replaceIfExists="true"><![CDATA[
+            SELECT mandate_ref, contract_ref, creditor_account, state,
+                   start_date, expiry_date, max_collection_amount
+            FROM mandate_effective_status
+        ]]></createView>
+    </changeSet>
+
+    <!-- SELECT grant to the ctv role (R-10), role-guarded exactly as the superseded msr
+         001-man-ctv-view-grant was: in a fresh Testcontainers cluster the ctv role does not
+         exist, so MARK_RAN skips the grant while the view is still created; the standing
+         cluster (RBAC provisioned by M9 / rpt 001-rpt-roles) has the role and the grant
+         applies. An unguarded GRANT fails the whole migration on a fresh DB. -->
+    <!-- LIQUIBASE-SQL-EXCEPTION: GRANT has no typed Liquibase tag; it is vendor DCL (dbms
+         below), not portable DDL. Idempotent by nature: re-granting is a no-op. -->
+    <changeSet id="005-man-ctv-view-grant" author="dcre" dbms="cockroachdb,postgresql">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="1">SELECT count(*) FROM pg_roles WHERE rolname = 'ctv'</sqlCheck>
+        </preConditions>
+        <sql>GRANT SELECT ON man_ctv_view TO ctv</sql>
+        <rollback>REVOKE SELECT ON man_ctv_view FROM ctv</rollback>
+    </changeSet>
+
+</databaseChangeLog>
