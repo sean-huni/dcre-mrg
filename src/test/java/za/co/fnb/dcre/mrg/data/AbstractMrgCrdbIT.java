@@ -53,6 +53,20 @@ public abstract class AbstractMrgCrdbIT {
         return ManSpineFixture.seedSpineWithDates(jdbc, client, mandateRef, mndtReqId, startDate, expiryDate);
     }
 
+    /** A follow-up instruction (AMEND / CANCEL) on an existing mandate_ref: the D5b fan-out. */
+    protected UUID seedInstruction(final String client, final String mandateRef,
+                                   final String mndtReqId, final String actionCode) {
+        return ManSpineFixture.seedInstruction(jdbc, client, mandateRef, mndtReqId, actionCode);
+    }
+
+    /** A follow-up instruction carrying its own CCYYMMDD dates (an AMEND that moves the expiry). */
+    protected UUID seedInstruction(final String client, final String mandateRef,
+                                   final String mndtReqId, final String actionCode,
+                                   final String startDate, final String expiryDate) {
+        return ManSpineFixture.seedInstruction(jdbc, client, mandateRef, mndtReqId, actionCode,
+                startDate, expiryDate);
+    }
+
     protected void seedDupEntry(final UUID arrival, final int sequence, final String mandateRef) {
         ManSpineFixture.seedDupEntry(jdbc, arrival, sequence, mandateRef);
     }

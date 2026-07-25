@@ -12,5 +12,6 @@
     <include file="db/changelog/2026/07/004-man-views.xml"/>
     <include file="db/changelog/2026/07/005-man-effective.xml"/>
     <include file="db/changelog/2026/07/006-drop-man-ext-status.xml"/>
+    <include file="db/changelog/2026/07/007-man-current-status.xml"/>
 
 </databaseChangeLog>

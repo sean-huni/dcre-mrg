@@ -227,7 +227,15 @@
          admission check would count it as a live twin and block a legitimate re-registration
          of that contract. stage_rank stays 1 for an MRV-only row: the verdict is the request
          leg, not a reply stage. mandate_effective_status (005) maps any non-PASS MRV outcome
-         at rank 1 to RJCT, which is what makes it terminal and not live. -->
+         at rank 1 to RJCT, which is what makes it terminal and not live.
+
+         action_code rides along (D5b, added 2026-07-25). It is an attribute of the
+         INSTRUCTION, which is exactly this view's grain, and the per-mandate collapse
+         (007 mandate_current_status) cannot be derived without it: an outcome's meaning
+         depends on the action it answers, so a rejected AMEND must not be read as a
+         rejected mandate. It is appended LAST on purpose: CRDB CREATE OR REPLACE VIEW
+         accepts new trailing columns on a view that already has dependents, but never a
+         reorder or an insertion. -->
 
     <changeSet id="004-mnd-ext-status" author="dcre" runOnChange="true">
         <createView viewName="mnd_ext_status" replaceIfExists="true"><![CDATA[
@@ -247,7 +255,8 @@
                    CASE WHEN pp.status IS NOT NULL THEN 4
                         WHEN sp.status IS NOT NULL THEN 3
                         WHEN ip.status IS NOT NULL THEN 2
-                        ELSE 1 END                                   AS stage_rank
+                        ELSE 1 END                                   AS stage_rank,
+                   e.action_code
             FROM mandate_request_entry e
             JOIN mandate_request_header h ON h.arrival_id = e.arrival_id
             LEFT JOIN man_validation_log v ON v.arrival_id = e.arrival_id

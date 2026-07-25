@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- SCRUM-91 D5b (defect fix, 2026-07-25): the per-MANDATE collapse.
+
+         mandate_request_entry has NO uniqueness on mandate_ref: it is keyed
+         (arrival_id, sequence). One mandate accumulates a CREATE, then AMENDs, then a
+         CANCEL, each its own spine entry in its own file with its own mndt_req_id and its
+         own leg replies. So mnd_ext_status (004) and mandate_effective_status (005) yield
+         N rows per mandate. That is CORRECT for those two: an instruction is what the
+         response legs answer, and it is the exact mirror of collections' ext_tx_status,
+         where a transaction IS the entity. It is wrong for CTV, for the 1:1-live check and
+         for the parity gate, which all ask "what is the state of THIS mandate".
+
+         Collapsing by picking one entry is wrong whichever entry you pick. The FSM this
+         replaces (MSR MandateStateMachine) was a sequential fold over ONE row keyed
+         mandate_ref, and it carried three things no per-entry projection expresses:
+         terminal states are frozen, an active mandate is never regressed by a late or
+         structural leg, and an outcome MEANS something different depending on the
+         action_code it answers. A rejected AMEND is RJCT for that INSTRUCTION while the
+         MANDATE stays ACCP; latest-entry-wins would read that mandate as rejected and stop
+         a live client's collections.
+
+         The fold is therefore reformulated as ORDER-INDEPENDENT aggregate predicates, which
+         is valid because every transition in the FSM is either absorbing or monotone. -->
+
+    <!-- Arm by arm, and why each is order-independent:
+
+         1. TERMINATE_NOW (MD07, end customer deceased) terminates from any non-terminal
+            state, so its presence on ANY instruction wins. It sits above the override arm
+            for the same reason it sat above everything in the FSM: MandateStateMachine
+            checks isTerminateNow() before it looks at the leg, and SUSPENDED (the only
+            state an override writes today) is non-terminal, so a deceased-customer verdict
+            beat it there too.
+         2. An explicit mandate_override wins over everything else derived (R-09). Via
+            mandate_override_pick, never the table: (mandate_ref, source) is the full
+            business identity, so the table join is a row fan-out (see 005).
+         3. An accepted CANCEL freezes the mandate, so its presence anywhere wins over ACCP.
+            TWO shapes count, and the second was missing from the spec sketch: an accepted
+            reply to a CANCEL instruction (action_code CANCEL + PBSR ACCP), AND a reply that
+            carries pain.012 Sts=CANC outright, which is how Fintegrate cancels a mandate
+            unilaterally (D8) and lands on the CREATE instruction's own leg. Without the
+            second shape that mandate fell through every arm to PDNG.
+         4. A rejected CREATE means the mandate never existed. A rejected AMEND or CANCEL
+            leaves the mandate as it was, which is why this arm is action_code-scoped: it is
+            the arm that makes latest-entry-wins unnecessary. COALESCE to CREATE covers a
+            spine entry with no action_code. It also covers the MRR B1a dup_in_file loser:
+            its mndt_req_id is NULL, it can never receive a leg reply, and 005 maps its MRV
+            verdict to RJCT, so a mandate whose only entry is that loser reads RJCT here and
+            is not live.
+         5/6. bool_or(state IN ('ACCP','EXPIRED')) encodes "never regress an active
+            mandate": once any instruction activated it, a later structural leg or a pending
+            row cannot pull it back to PDNG. EXPIRED counts as activated because 005 only
+            reaches EXPIRED from an activating PBSR ACCP.
+            Expiry is then evaluated ONCE, against max(expiry_date), the same value this row
+            reports. Testing bool_or(state = 'EXPIRED') instead (the spec sketch) reads a
+            mandate as EXPIRED on the strength of a superseded entry even when a later AMEND
+            extended the date, and contradicts the expiry_date the same row publishes.
+            As in 005, current_date under CTV's AS OF SYSTEM TIME read evaluates at the
+            SNAPSHOT (A-64). That is correct for an admissibility gate; never "fix" it into
+            a written column.
+
+         KNOWN LIMITATION, accepted and recorded (D5b): a critical-field AMEND that forces
+         re-authorisation (MandateStateMachine.finalLeg: accepted AMEND with criticalAmend
+         returns PDNG) is the one genuinely order-dependent transition, since it must pull an
+         already-ACCP mandate back to PDNG. It is not expressible here and is out of scope:
+         criticalAmend has no source column on the spine, MSR derived it in Java by diffing
+         against the projection row it was about to overwrite, and nothing sets it today.
+
+         reason follows the winning arm rather than being an arbitrary max(): the
+         terminating reason first, then the override's, then a terminal leg's, then whatever
+         the mandate carries. no_retry latches across instructions, exactly as the FSM's
+         isNoRetry latched onto the projection row. -->
+
+    <changeSet id="007-mandate-current-status" author="dcre" runOnChange="true">
+        <createView viewName="mandate_current_status" replaceIfExists="true"><![CDATA[
+            SELECT m.mandate_ref,
+                   max(m.client)                AS client,
+                   max(m.contract_ref)          AS contract_ref,
+                   max(m.debtor_account)        AS debtor_account,
+                   max(m.creditor_account)      AS creditor_account,
+                   max(m.max_collection_amount) AS max_collection_amount,
+                   max(m.start_date)            AS start_date,
+                   max(m.expiry_date)           AS expiry_date,
+                   CASE
+                     WHEN bool_or(rc.system_action = 'TERMINATE_NOW')          THEN 'RJCT'
+                     WHEN max(o.state) IS NOT NULL                             THEN max(o.state)
+                     WHEN bool_or(m.state = 'CANC'
+                                  OR (m.action_code = 'CANCEL' AND m.stage_rank = 4
+                                      AND m.raw_status = 'ACCP'))              THEN 'CANC'
+                     WHEN bool_or(COALESCE(m.action_code, 'CREATE') = 'CREATE'
+                                  AND m.state = 'RJCT')                        THEN 'RJCT'
+                     WHEN bool_or(m.state IN ('ACCP', 'EXPIRED'))
+                          AND max(m.expiry_date) IS NOT NULL
+                          AND max(m.expiry_date) <> ''
+                          AND to_date(max(m.expiry_date), 'YYYYMMDD') < current_date
+                                                                               THEN 'EXPIRED'
+                     WHEN bool_or(m.state IN ('ACCP', 'EXPIRED'))               THEN 'ACCP'
+                     ELSE 'PDNG'
+                   END AS state,
+                   COALESCE(max(m.reason) FILTER (WHERE rc.system_action = 'TERMINATE_NOW'),
+                            max(o.reason),
+                            max(m.reason) FILTER (WHERE m.state IN ('RJCT', 'CANC')),
+                            max(m.reason))                                     AS reason,
+                   bool_or(m.no_retry)                                         AS no_retry
+            FROM mandate_effective_status m
+            LEFT JOIN mandate_override_pick o ON o.mandate_ref = m.mandate_ref
+            LEFT JOIN mandate_reason_code rc ON rc.code = m.reason
+            GROUP BY m.mandate_ref
+        ]]></createView>
+    </changeSet>
+
+    <!-- Re-point CTV. Guarded drop first: on an already-migrated database man_ctv_view
+         exists over the INSTRUCTION-grain view (005 created it there before this defect was
+         found), and a CRDB CREATE OR REPLACE cannot be relied on to swap the source under a
+         granted view. On a fresh database 005 leaves no view at all, so this MARK_RANs and
+         the create below is the first and only definition. -->
+    <changeSet id="007-drop-man-ctv-view-v2" author="dcre">
+        <preConditions onFail="MARK_RAN"><viewExists viewName="man_ctv_view"/></preConditions>
+        <dropView viewName="man_ctv_view"/>
+    </changeSet>
+
+    <!-- IDENTICAL column list and order to the version CTV reads today (D7). Only the row
+         source changes, from N-rows-per-mandate to exactly one, so MandateProjectionDao,
+         VerdictChain.projectionMandateVerdict and the dcre.ctv.mandate-source toggle are
+         all untouched. The column contract is pinned by a test. -->
+    <changeSet id="007-man-ctv-view-v3" author="dcre" runOnChange="true">
+        <createView viewName="man_ctv_view" replaceIfExists="true"><![CDATA[
+            SELECT mandate_ref, contract_ref, creditor_account, state,
+                   start_date, expiry_date, max_collection_amount
+            FROM mandate_current_status
+        ]]></createView>
+    </changeSet>
+
+    <!-- SELECT grant to the ctv role (R-10), role-guarded exactly as the superseded
+         005-man-ctv-view-grant was: in a fresh Testcontainers cluster the ctv role does not
+         exist, so MARK_RAN skips the grant while the view is still created; the standing
+         cluster (RBAC provisioned by M9 / rpt 001-rpt-roles) has the role and the grant
+         applies. An unguarded GRANT fails the whole migration on a fresh DB. It re-runs
+         here by design: the changeset identity is (id, author, FILENAME) and DROP VIEW
+         above discarded the grant the 005 copy had made. -->
+    <!-- LIQUIBASE-SQL-EXCEPTION: GRANT has no typed Liquibase tag; it is vendor DCL (dbms
+         below), not portable DDL. Idempotent by nature: re-granting is a no-op. -->
+    <changeSet id="007-man-ctv-view-grant" author="dcre" dbms="cockroachdb,postgresql">
+        <preConditions onFail="MARK_RAN">
+            <sqlCheck expectedResult="1">SELECT count(*) FROM pg_roles WHERE rolname = 'ctv'</sqlCheck>
+        </preConditions>
+        <sql>GRANT SELECT ON man_ctv_view TO ctv</sql>
+        <rollback>REVOKE SELECT ON man_ctv_view FROM ctv</rollback>
+    </changeSet>
+
+</databaseChangeLog>

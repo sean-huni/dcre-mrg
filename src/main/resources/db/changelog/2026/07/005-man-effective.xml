@@ -110,7 +110,16 @@
             instruction passed that stage but the debtor has not authenticated yet.
 
          no_retry derives from the mandate_reason_code reference table's system_action
-         (R-21: codes in tables, never enums), so retry policy is reference-data-driven. -->
+         (R-21: codes in tables, never enums), so retry policy is reference-data-driven.
+
+         GRAIN (D5b, 2026-07-25): this view is per INSTRUCTION, not per mandate. The spine
+         is keyed (arrival_id, sequence) with NO uniqueness on mandate_ref, so a mandate
+         with a CREATE, an AMEND and a CANCEL has three rows here, each with its own state.
+         That is the correct grain for reporting what happened to each instruction, and it
+         is the exact mirror of collections' ext_tx_status. Consumers that need ONE row per
+         mandate (CTV, the 1:1-live check, the parity gate) read mandate_current_status
+         (007), which collapses these rows through the FSM. action_code is carried so that
+         collapse can tell a rejected AMEND from a rejected CREATE. -->
     <changeSet id="005-mandate-effective-status" author="dcre" runOnChange="true">
         <createView viewName="mandate_effective_status" replaceIfExists="true"><![CDATA[
             SELECT x.client,
@@ -139,7 +148,8 @@
                      ELSE 'PDNG'
                    END AS state,
                    COALESCE(o.reason, x.reason) AS reason,
-                   COALESCE(rc.system_action IN ('NO_RETRY', 'PERMANENT_FAIL'), false) AS no_retry
+                   COALESCE(rc.system_action IN ('NO_RETRY', 'PERMANENT_FAIL'), false) AS no_retry,
+                   x.action_code
             FROM mnd_ext_status x
             LEFT JOIN mandate_override_pick o ON o.mandate_ref = x.mandate_ref
             LEFT JOIN mandate_reason_code rc ON rc.code = COALESCE(o.reason, x.reason)
@@ -148,34 +158,18 @@
 
     <!-- CRDB CREATE OR REPLACE VIEW cannot reorder or insert columns, and man_ctv_view is
          being redefined over a different source. Drop it first under a viewExists guard so
-         the upgrade order is deterministic on every CRDB line; the runOnChange changeset
-         below recreates it with an IDENTICAL column list, so CTV needs no code change. -->
+         the upgrade order is deterministic on every CRDB line. This drops the MSR-era view;
+         man_ctv_view is RECREATED in 007 over mandate_current_status, with an IDENTICAL
+         column list, so CTV needs no code change.
+
+         The definition deliberately does NOT live here any more (D5b): it must read the
+         per-mandate collapse, and that view does not exist yet at this point in the
+         changelog. Keeping a definition here as well would leave man_ctv_view pointing at
+         the INSTRUCTION-grain view whenever this file's runOnChange changesets re-run
+         without 007's also re-running, which is exactly the N-rows-per-mandate defect. -->
     <changeSet id="005-drop-man-ctv-view-v1" author="dcre">
         <preConditions onFail="MARK_RAN"><viewExists viewName="man_ctv_view"/></preConditions>
         <dropView viewName="man_ctv_view"/>
-    </changeSet>
-
-    <changeSet id="005-man-ctv-view-v2" author="dcre" runOnChange="true">
-        <createView viewName="man_ctv_view" replaceIfExists="true"><![CDATA[
-            SELECT mandate_ref, contract_ref, creditor_account, state,
-                   start_date, expiry_date, max_collection_amount
-            FROM mandate_effective_status
-        ]]></createView>
-    </changeSet>
-
-    <!-- SELECT grant to the ctv role (R-10), role-guarded exactly as the superseded msr
-         001-man-ctv-view-grant was: in a fresh Testcontainers cluster the ctv role does not
-         exist, so MARK_RAN skips the grant while the view is still created; the standing
-         cluster (RBAC provisioned by M9 / rpt 001-rpt-roles) has the role and the grant
-         applies. An unguarded GRANT fails the whole migration on a fresh DB. -->
-    <!-- LIQUIBASE-SQL-EXCEPTION: GRANT has no typed Liquibase tag; it is vendor DCL (dbms
-         below), not portable DDL. Idempotent by nature: re-granting is a no-op. -->
-    <changeSet id="005-man-ctv-view-grant" author="dcre" dbms="cockroachdb,postgresql">
-        <preConditions onFail="MARK_RAN">
-            <sqlCheck expectedResult="1">SELECT count(*) FROM pg_roles WHERE rolname = 'ctv'</sqlCheck>
-        </preConditions>
-        <sql>GRANT SELECT ON man_ctv_view TO ctv</sql>
-        <rollback>REVOKE SELECT ON man_ctv_view FROM ctv</rollback>
     </changeSet>
 
 </databaseChangeLog>

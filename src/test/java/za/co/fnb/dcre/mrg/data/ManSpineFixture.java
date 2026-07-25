@@ -29,6 +29,27 @@ public final class ManSpineFixture {
     public static UUID seedSpineWithDates(final JdbcTemplate jdbc, final String client,
                                           final String mandateRef, final String mndtReqId,
                                           final String startDate, final String expiryDate) {
+        return seedInstruction(jdbc, client, mandateRef, mndtReqId, "CREATE", startDate, expiryDate);
+    }
+
+    /**
+     * A FOLLOW-UP instruction on an existing mandate_ref (D5b). The spine has NO uniqueness on
+     * mandate_ref: it is keyed (arrival_id, sequence), so one mandate accumulates a CREATE, then
+     * AMENDs, then a CANCEL, each its own entry in its own file with its own mndt_req_id and its
+     * own leg replies. That is the fan-out mandate_current_status collapses, and no suite could
+     * express it before this helper existed.
+     */
+    public static UUID seedInstruction(final JdbcTemplate jdbc, final String client,
+                                       final String mandateRef, final String mndtReqId,
+                                       final String actionCode) {
+        return seedInstruction(jdbc, client, mandateRef, mndtReqId, actionCode, "20260101", "20991231");
+    }
+
+    /** Same follow-up instruction with explicit CCYYMMDD dates: an AMEND that moves the expiry. */
+    public static UUID seedInstruction(final JdbcTemplate jdbc, final String client,
+                                       final String mandateRef, final String mndtReqId,
+                                       final String actionCode, final String startDate,
+                                       final String expiryDate) {
         final UUID arrival = UUID.randomUUID();
         jdbc.update("INSERT INTO mandate_request_header (arrival_id, msg_id_raw, msg_id, created_ts,"
                         + " entry_count, destination_id, business_date, client_token, layout_version)"
@@ -39,7 +60,7 @@ public final class ManSpineFixture {
                         + " mandate_ref, contract_ref, creditor_account, debtor_account, currency,"
                         + " max_collection_amount_raw, max_collection_amount, start_date, expiry_date,"
                         + " mndt_req_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                arrival, 1, "MD", "CREATE", mandateRef, "CTR" + mandateRef, "62000000010",
+                arrival, 1, "MD", actionCode, mandateRef, "CTR" + mandateRef, "62000000010",
                 "62000000020", "ZAR", "1000", 10.00, startDate, expiryDate, mndtReqId);
         return arrival;
     }
