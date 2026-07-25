@@ -8,20 +8,19 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.CockroachContainer;
 import org.testcontainers.utility.DockerImageName;
 
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Shared Testcontainers base for MRG's view-contract tests (SCRUM-91). MRG had NO shared
- * base class: MrgJobTest, ManStateDeltaServiceIT and bdd/CucumberSpringConfig each carry
- * their own static CockroachContainer plus @DynamicPropertySource. This factors that exact
- * bootstrap out once for the view suites, which all need the same real schema and the same
- * seed fixtures over the MRR request spine and the three response-leg tables.
+ * Shared Testcontainers base for MRG's view-contract and delta suites (SCRUM-91). MRG had
+ * NO shared base class: MrgJobTest, ManStateDeltaServiceIT and bdd/CucumberSpringConfig
+ * each carry their own static CockroachContainer plus @DynamicPropertySource. This factors
+ * that bootstrap out once for the suites that need the real migrated schema.
  *
- * <p>Everything here seeds REAL tables through the real Liquibase-migrated schema: no mocks,
- * no hand-built view sources. The views under test are therefore proved against the shape the
- * owning services actually create.</p>
+ * <p>Everything seeds REAL tables through the real Liquibase-migrated schema: no mocks, no
+ * hand-built view sources. The views under test are therefore proved against the shape the
+ * owning services actually create. The seed bodies live in {@link ManSpineFixture} and
+ * {@link ManLegFixture} because the suites that do NOT extend this base need them too.</p>
  */
 @SpringBootTest(properties = {"spring.batch.job.enabled=false",
         "dcre.exchange-root=build/test-exchange", "DCRE_EXCHANGE_ROOT=build/test-exchange"})
@@ -44,98 +43,46 @@ public abstract class AbstractMrgCrdbIT {
     @Autowired
     protected JdbcTemplate jdbc;
 
-    /** Seeds one MRR spine header + entry, the row source of the mandate view stack. */
     protected UUID seedSpine(final String client, final String mandateRef, final String mndtReqId) {
-        return seedSpineWithDates(client, mandateRef, mndtReqId, "20260101", "20991231");
+        return ManSpineFixture.seedSpine(jdbc, client, mandateRef, mndtReqId);
     }
 
-    /** Same spine seed with explicit CCYYMMDD start/expiry (VARCHAR(8), never DATE). */
     protected UUID seedSpineWithDates(final String client, final String mandateRef,
                                       final String mndtReqId, final String startDate,
                                       final String expiryDate) {
-        final UUID arrival = UUID.randomUUID();
-        jdbc.update("INSERT INTO mandate_request_header (arrival_id, msg_id_raw, msg_id, created_ts,"
-                        + " entry_count, destination_id, business_date, client_token, layout_version)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?)",
-                arrival, "MSG" + mndtReqId, "MSG" + mndtReqId, "20260725080000", 1, "ONHOST",
-                "20260725", client, 1);
-        jdbc.update("INSERT INTO mandate_request_entry (arrival_id, sequence, record_type, action_code,"
-                        + " mandate_ref, contract_ref, creditor_account, debtor_account, currency,"
-                        + " max_collection_amount_raw, max_collection_amount, start_date, expiry_date,"
-                        + " mndt_req_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                arrival, 1, "MD", "CREATE", mandateRef, "CTR" + mandateRef, "62000000010",
-                "62000000020", "ZAR", "1000", 10.00, startDate, expiryDate, mndtReqId);
-        return arrival;
+        return ManSpineFixture.seedSpineWithDates(jdbc, client, mandateRef, mndtReqId, startDate, expiryDate);
     }
 
-    /**
-     * MRR B1a: the LATER occurrence of an intra-file (mandate_ref, action_code) duplicate is
-     * landed with mndt_req_id NULL and dup_in_file true. It never reaches Fintegrate, so it can
-     * NEVER receive a leg response; only MRV's verdict can ever give it a status.
-     */
     protected void seedDupEntry(final UUID arrival, final int sequence, final String mandateRef) {
-        jdbc.update("INSERT INTO mandate_request_entry (arrival_id, sequence, record_type, action_code,"
-                        + " mandate_ref, contract_ref, creditor_account, debtor_account, currency,"
-                        + " max_collection_amount_raw, max_collection_amount, start_date, expiry_date,"
-                        + " mndt_req_id, dup_in_file) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,true)",
-                arrival, sequence, "MD", "CREATE", mandateRef, "CTR" + mandateRef, "62000000010",
-                "62000000020", "ZAR", "1000", 10.00, "20260101", "20991231");
+        ManSpineFixture.seedDupEntry(jdbc, arrival, sequence, mandateRef);
     }
 
-    /** MRV's request-leg verdict sink (man_validation_log), keyed on (arrival_id, sequence). */
     protected void seedVerdict(final UUID arrival, final int sequence, final String outcome,
                                final String detail) {
-        jdbc.update("INSERT INTO man_validation_log (arrival_id, sequence, outcome, detail)"
-                + " VALUES (?,?,?,?)", arrival, sequence, outcome, detail);
+        ManSpineFixture.seedVerdict(jdbc, arrival, sequence, outcome, detail);
     }
 
-    /**
-     * An explicit override record at a pinned effective_from. The unique key is the FULL
-     * business identity (mandate_ref, source), so one mandate can legitimately carry several
-     * of these at once; the view must collapse them to the single winner.
-     */
     protected void seedOverride(final String mandateRef, final String state, final String reason,
                                 final String source, final String effectiveFrom) {
-        jdbc.update("INSERT INTO mandate_override (mandate_ref, state, reason, source, effective_from)"
-                + " VALUES (?,?,?,?,?::TIMESTAMPTZ)", mandateRef, state, reason, source, effectiveFrom);
+        ManSpineFixture.seedOverride(jdbc, mandateRef, state, reason, source, effectiveFrom);
     }
 
     protected void seedIsr(final String mndtReqId, final String status, final String reason) {
-        seedLeg("man_isr_resp", mndtReqId, status, reason, mndtReqId + "_ISR.xml", null);
+        ManLegFixture.seedLeg(jdbc, "man_isr_resp", mndtReqId, status, reason, mndtReqId + "_ISR.xml", null);
     }
 
     protected void seedSbsr(final String mndtReqId, final String status, final String reason) {
-        seedLeg("man_sbsr_resp", mndtReqId, status, reason, mndtReqId + "_SBSR.xml", null);
+        ManLegFixture.seedLeg(jdbc, "man_sbsr_resp", mndtReqId, status, reason, mndtReqId + "_SBSR.xml", null);
     }
 
     protected void seedPbsr(final String mndtReqId, final String status, final String reason) {
-        seedLeg("man_pbsr_resp", mndtReqId, status, reason, mndtReqId + "_PBSR.xml", null);
+        ManLegFixture.seedLeg(jdbc, "man_pbsr_resp", mndtReqId, status, reason, mndtReqId + "_PBSR.xml", null);
     }
 
     /** Delayed-authentication shape: a second PBSR under a distinct file at an explicit arrival time. */
     protected void seedPbsrAt(final String mndtReqId, final String status, final String reason,
                               final String responseFile, final String createdAt) {
-        seedLeg("man_pbsr_resp", mndtReqId, status, reason, responseFile, createdAt);
-    }
-
-    private void seedLeg(final String table, final String mndtReqId, final String status,
-                         final String reason, final String responseFile, final String createdAt) {
-        final String columns = "(response_file, orgnl_msg_id, mndt_id, mndt_req_id, status, reason";
-        if (createdAt == null) {
-            jdbc.update("INSERT INTO %s %s) VALUES (?,?,?,?,?,?)".formatted(table, columns),
-                    responseFile, "OUT-" + mndtReqId, mandateRefOf(mndtReqId), mndtReqId, status, reason);
-            return;
-        }
-        jdbc.update("INSERT INTO %s %s, created_at) VALUES (?,?,?,?,?,?,?::TIMESTAMPTZ)".formatted(table, columns),
-                responseFile, "OUT-" + mndtReqId, mandateRefOf(mndtReqId), mndtReqId, status, reason, createdAt);
-    }
-
-    /** MndtId on a reply is the mandate_ref; resolve it from the spine so fixtures stay real. */
-    private String mandateRefOf(final String mndtReqId) {
-        final List<String> refs = jdbc.queryForList(
-                "SELECT mandate_ref FROM mandate_request_entry WHERE mndt_req_id = ?",
-                String.class, mndtReqId);
-        return refs.isEmpty() ? mndtReqId : refs.getFirst();
+        ManLegFixture.seedLeg(jdbc, "man_pbsr_resp", mndtReqId, status, reason, responseFile, createdAt);
     }
 
     /** Rows a view yields for ONE mandate. Scoped by mandate_ref: the suite shares a container. */

@@ -8,6 +8,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.CockroachContainer;
 import org.testcontainers.utility.DockerImageName;
+import za.co.fnb.dcre.mrg.data.ManLegFixture;
 import za.co.fnb.dcre.mrg.data.model.ManReportEntity;
 import za.co.fnb.dcre.mrg.data.repo.ManReportRepo;
 
@@ -15,7 +16,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -65,24 +65,17 @@ class ManStateDeltaServiceIT {
     @Autowired
     JdbcTemplate jdbc;
 
-    /** Seeds one mandate projection row plus the spine header/entry that carry the client dimension. */
+    /**
+     * Seeds the spine plus the reply that makes the mandate READ {@code state}. There is no
+     * projection row to write any more (SCRUM-91): state is derived, so the fixture states
+     * the reply, not the answer.
+     */
     void seedMandate(final String client, final String mandateRef, final String state) {
-        final UUID arrival = UUID.randomUUID();
-        jdbc.update("INSERT INTO mandate_request_header (arrival_id, msg_id_raw, msg_id, created_ts,"
-                        + " entry_count, destination_id, business_date, client_token, layout_version)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?)",
-                arrival, "MSG" + mandateRef, "MSG" + mandateRef, "20260722080000", 1, "ONHOST",
-                "20260722", client, 1);
-        jdbc.update("INSERT INTO mandate_request_entry (arrival_id, sequence, record_type, action_code,"
-                        + " mandate_ref, currency, max_collection_amount_raw, max_collection_amount)"
-                        + " VALUES (?,?,?,?,?,?,?,?)",
-                arrival, 1, "MD", "CREATE", mandateRef, "ZAR", "1000", 10.00);
-        jdbc.update("INSERT INTO mandate (mandate_ref, contract_ref, creditor_account, state)"
-                + " VALUES (?,?,?,?)", mandateRef, "CTR" + mandateRef, "62000000010", state);
+        ManLegFixture.seedMandateInState(jdbc, client, mandateRef, state);
     }
 
     void flip(final String mandateRef, final String state) {
-        jdbc.update("UPDATE mandate SET state=?, updated_at=now() WHERE mandate_ref=?", state, mandateRef);
+        ManLegFixture.advanceTo(jdbc, mandateRef, state);
     }
 
     String ref(final String client, final int i) {

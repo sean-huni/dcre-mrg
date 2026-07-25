@@ -19,7 +19,7 @@ spring:
       # ON CONFLICT (client, mandate_ref); ledger partial-unique ON CONFLICT (client, mandate_ref,
       # state) WHERE manual_ref IS NULL) so zero-dup is preserved. mrg mirrors prg exactly and
       # uses NO cluster_logical_timestamp() / AS OF SYSTEM TIME (its delta read is a plain SELECT
-      # over the man_ext_status projection view), so it is RC-safe; only ctv/rpt keep the
+      # over the derived mandate_effective_status view), so it is RC-safe; only ctv/rpt keep the
       # SERIALIZABLE default because they use AS OF SYSTEM TIME, which CRDB allows only there.
       transaction-isolation: TRANSACTION_READ_COMMITTED
   liquibase:

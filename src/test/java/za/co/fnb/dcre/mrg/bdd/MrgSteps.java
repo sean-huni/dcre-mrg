@@ -6,6 +6,7 @@ import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import za.co.fnb.dcre.mrg.data.ManLegFixture;
 import za.co.fnb.dcre.mrg.data.model.ManReportEntity;
 import za.co.fnb.dcre.mrg.data.repo.ManReportRepo;
 import za.co.fnb.dcre.mrg.domain.ManReportLayout;
@@ -58,25 +59,14 @@ public class MrgSteps {
         jdbc.update("DELETE FROM man_watermark WHERE client=?", client);
     }
 
-    @Given("mandate {string} has projection state {string}")
+    @Given("mandate {string} reads state {string}")
     public void mandateHasState(final String mandate, final String state) {
-        final String ref = ref(mandate);
-        final var arrival = java.util.UUID.randomUUID();
-        jdbc.update("INSERT INTO mandate_request_header (arrival_id, msg_id_raw, msg_id, created_ts,"
-                        + " entry_count, destination_id, business_date, client_token, layout_version)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?)",
-                arrival, "MSG" + ref, "MSG" + ref, "20260722080000", 1, "ONHOST", "20260722", client, 1);
-        jdbc.update("INSERT INTO mandate_request_entry (arrival_id, sequence, record_type, action_code,"
-                        + " mandate_ref, currency, max_collection_amount_raw, max_collection_amount)"
-                        + " VALUES (?,?,?,?,?,?,?,?)",
-                arrival, 1, "MD", "CREATE", ref, "ZAR", "1000", 10.00);
-        jdbc.update("INSERT INTO mandate (mandate_ref, contract_ref, creditor_account, state)"
-                + " VALUES (?,?,?,?)", ref, "CTR" + ref, "62000000010", state);
+        ManLegFixture.seedMandateInState(jdbc, client, ref(mandate), state);
     }
 
     @When("mandate {string} advances to state {string}")
     public void mandateAdvances(final String mandate, final String state) {
-        jdbc.update("UPDATE mandate SET state=?, updated_at=now() WHERE mandate_ref=?", state, ref(mandate));
+        ManLegFixture.advanceTo(jdbc, ref(mandate), state);
     }
 
     @Given("the MRG window {string} has already run")

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- SCRUM-91: man_ext_status was projection-dressing over the MSR-written mandate
+         table (SELECT DISTINCT ... FROM mandate JOIN the spine), not the specified
+         consolidation view. mnd_ext_status (004) plus mandate_effective_status (005)
+         supersede it, and ManWatermarkRepo now reads the latter.
+
+         Ordered LAST in the master changelog and shipped in the SAME wave as the repo
+         re-point, so nothing reads a dropped view mid-migration: on a live dcre_man the
+         new views exist (004/005 run first) before this drop executes, and the deployed
+         jar that runs this migration is the one already reading the derived view.
+
+         The viewExists guard is what makes every reachable DB state converge: a fresh
+         database never created man_ext_status (003 creates it, so it does, but a database
+         restored past this point has not), and a re-run finds it gone and MARK_RANs.
+
+         003-man-ext-status-view is deliberately NOT edited: applied changesets are
+         immutable, and it is runOnChange, so touching it would re-create the very view
+         this drops on the next migration. -->
+    <changeSet id="006-drop-man-ext-status" author="dcre">
+        <preConditions onFail="MARK_RAN"><viewExists viewName="man_ext_status"/></preConditions>
+        <dropView viewName="man_ext_status"/>
+    </changeSet>
+
+</databaseChangeLog>
