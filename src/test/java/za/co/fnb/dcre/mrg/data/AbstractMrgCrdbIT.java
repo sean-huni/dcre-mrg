@@ -89,6 +89,17 @@ public abstract class AbstractMrgCrdbIT {
                 + " VALUES (?,?,?,?)", arrival, sequence, outcome, detail);
     }
 
+    /**
+     * An explicit override record at a pinned effective_from. The unique key is the FULL
+     * business identity (mandate_ref, source), so one mandate can legitimately carry several
+     * of these at once; the view must collapse them to the single winner.
+     */
+    protected void seedOverride(final String mandateRef, final String state, final String reason,
+                                final String source, final String effectiveFrom) {
+        jdbc.update("INSERT INTO mandate_override (mandate_ref, state, reason, source, effective_from)"
+                + " VALUES (?,?,?,?,?::TIMESTAMPTZ)", mandateRef, state, reason, source, effectiveFrom);
+    }
+
     protected void seedIsr(final String mndtReqId, final String status, final String reason) {
         seedLeg("man_isr_resp", mndtReqId, status, reason, mndtReqId + "_ISR.xml", null);
     }
@@ -125,6 +136,13 @@ public abstract class AbstractMrgCrdbIT {
                 "SELECT mandate_ref FROM mandate_request_entry WHERE mndt_req_id = ?",
                 String.class, mndtReqId);
         return refs.isEmpty() ? mndtReqId : refs.getFirst();
+    }
+
+    /** Rows a view yields for ONE mandate. Scoped by mandate_ref: the suite shares a container. */
+    protected int rowCountOf(final String view, final String mandateRef) {
+        final Integer n = jdbc.queryForObject(
+                "SELECT count(*) FROM %s WHERE mandate_ref = ?".formatted(view), Integer.class, mandateRef);
+        return n == null ? -1 : n;
     }
 
     protected Map<String, Object> queryOne(final String sql) {

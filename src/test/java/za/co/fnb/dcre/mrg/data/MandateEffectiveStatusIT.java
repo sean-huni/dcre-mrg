@@ -110,6 +110,54 @@ class MandateEffectiveStatusIT extends AbstractMrgCrdbIT {
     }
 
     /**
+     * Fan-out guard (D5, corrected 2026-07-25). mandate_override's unique key is the FULL
+     * business identity (mandate_ref, source), so one mandate legitimately carries an OPS
+     * override AND a COLLECTION_FAILURE override at the same time. Joining the TABLE fans
+     * that out to one row PER OVERRIDE per spine entry: two rows in
+     * mandate_effective_status and therefore two in man_ctv_view, which breaks CTV's
+     * one-row-per-mandate read and double-counts in MRG's report. The join must collapse
+     * through mandate_override_pick.
+     */
+    @Test
+    void twoOverrideSourcesStillYieldExactlyOneRowPerMandate() {
+        seedSpine("CL01", "MND-22", "MREQ-22");
+        seedPbsr("MREQ-22", "ACCP", null);
+        seedOverride("MND-22", "SUSPENDED", "MS03", "COLLECTION_FAILURE", "2026-07-20T08:00:00Z");
+        seedOverride("MND-22", "CANC", "MD06", "OPS", "2026-07-21T08:00:00Z");
+
+        assertThat(rowCountOf("mandate_effective_status", "MND-22")).isEqualTo(1);
+        assertThat(rowCountOf("man_ctv_view", "MND-22")).isEqualTo(1);
+    }
+
+    /** Latest wins: the pick view orders on effective_from DESC, same shape as the leg picks. */
+    @Test
+    void theLatestOverrideWins() {
+        seedSpine("CL01", "MND-23", "MREQ-23");
+        seedPbsr("MREQ-23", "ACCP", null);
+        seedOverride("MND-23", "SUSPENDED", "MS03", "COLLECTION_FAILURE", "2026-07-20T08:00:00Z");
+        seedOverride("MND-23", "CANC", "MD06", "OPS", "2026-07-21T08:00:00Z");
+
+        assertThat(stateOf("MREQ-23")).isEqualTo("CANC");
+        assertThat(reasonOf("MREQ-23")).isEqualTo("MD06");
+    }
+
+    /**
+     * An effective_from tie must resolve by source ASC. Without that arm the winner is
+     * whichever row CRDB happens to rank first, so the view is non-deterministic across
+     * reads: the same mandate could read SUSPENDED now and CANC on the next scan.
+     */
+    @Test
+    void anEffectiveFromTieResolvesDeterministicallyBySource() {
+        seedSpine("CL01", "MND-24", "MREQ-24");
+        seedPbsr("MREQ-24", "ACCP", null);
+        seedOverride("MND-24", "SUSPENDED", "MS03", "COLLECTION_FAILURE", "2026-07-22T08:00:00Z");
+        seedOverride("MND-24", "CANC", "MD06", "OPS", "2026-07-22T08:00:00Z");
+
+        assertThat(stateOf("MREQ-24")).isEqualTo("SUSPENDED");
+        assertThat(reasonOf("MREQ-24")).isEqualTo("MS03");
+    }
+
+    /**
      * The request-leg rejection arm. An MRV FAIL_DUPLICATE_REF entry has a NULL mndt_req_id
      * (MRR B1a) and can NEVER receive a leg response, so it must read terminal here or the
      * 1:1-live admission check would treat it as a live twin and block a legitimate

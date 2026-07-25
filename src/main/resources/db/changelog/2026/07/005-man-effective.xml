@@ -45,12 +45,53 @@
                              constraintName="uq_mandate_override_ref_source"/>
     </changeSet>
 
+    <!-- Index-backed override pick window, created BEFORE the view that reads it (same
+         contract as 004's ix_man_*_pick): (partition key, then the ORDER BY leader
+         descending) so CRDB reads the window in index order instead of sorting the table.
+         mandate_effective_status is on CTV's hot path, so this goes in up front. -->
+    <changeSet id="005-ix-mandate-override-pick" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="mandate_override" indexName="ix_mandate_override_pick"/></not>
+        </preConditions>
+        <createIndex tableName="mandate_override" indexName="ix_mandate_override_pick">
+            <column name="mandate_ref"/>
+            <column name="effective_from" descending="true"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- ONE winning override per mandate, the same latest-row-wins shape the leg pick views
+         use. This view is REQUIRED, not cosmetic: the unique key on mandate_override is the
+         FULL business identity (mandate_ref, source), so a mandate legitimately carries an
+         OPS override AND a COLLECTION_FAILURE override at once. Joining the TABLE from
+         mandate_effective_status fans that out to one row PER OVERRIDE per spine entry, so
+         man_ctv_view would hand CTV two rows for one mandate and MRG would report the mandate
+         twice in a single window. Narrowing the unique key to mandate_ref is NOT the fix: it
+         would let the two sources clobber each other, which is the subset-key defect the
+         idempotency rule forbids. Collapse at READ time instead.
+
+         effective_from DESC picks the newest override; source ASC is the deterministic
+         tie-break for two overrides sharing an effective_from. Without that second key the
+         winner is whichever row CRDB happens to rank first, so the same mandate could read
+         SUSPENDED on one scan and CANC on the next. -->
+    <changeSet id="005-mandate-override-pick" author="dcre" runOnChange="true">
+        <createView viewName="mandate_override_pick" replaceIfExists="true"><![CDATA[
+            SELECT u.mandate_ref, u.state, u.reason
+            FROM (SELECT o.mandate_ref, o.state, o.reason,
+                         row_number() OVER (PARTITION BY o.mandate_ref
+                                            ORDER BY o.effective_from DESC,
+                                                     o.source ASC) AS pick_rank
+                  FROM mandate_override o) AS u
+            WHERE u.pick_rank = 1
+        ]]></createView>
+    </changeSet>
+
     <!-- The FSM, verbatim from MSR's deleted MandateStateMachine. Precedence order in the
          CASE is load-bearing:
 
-         1. An explicit mandate_override wins outright (R-09: explicit records beat the
-            derived value). It is the only cross-database signal, so nothing derived here
-            can contradict it.
+         1. An explicit override wins outright (R-09: explicit records beat the derived
+            value). It is the only cross-database signal, so nothing derived here can
+            contradict it. The join goes through mandate_override_pick, never the table:
+            see that changeset for why the table join is a row fan-out.
          2. A leg RJCT/CANC is terminal wherever it came from.
          3. A REQUEST-leg rejection (stage_rank 1, an MRV outcome that is neither MRV_PASS
             nor the no-verdict-yet PDNG) is terminal too. This arm covers the MRR B1a
@@ -100,7 +141,7 @@
                    COALESCE(o.reason, x.reason) AS reason,
                    COALESCE(rc.system_action IN ('NO_RETRY', 'PERMANENT_FAIL'), false) AS no_retry
             FROM mnd_ext_status x
-            LEFT JOIN mandate_override o ON o.mandate_ref = x.mandate_ref
+            LEFT JOIN mandate_override_pick o ON o.mandate_ref = x.mandate_ref
             LEFT JOIN mandate_reason_code rc ON rc.code = COALESCE(o.reason, x.reason)
         ]]></createView>
     </changeSet>
