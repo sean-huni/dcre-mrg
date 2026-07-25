@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- SCRUM-91: the mandate response-leg consolidation, the exact mirror of prg's
+         003-reporting ext_tx_status stack. Three per-leg pick views select the latest
+         row per mandate request, then one precedence view COALESCEs PBSR > SBSR > ISR.
+         There is NO writer: state is derived, which is what R-09 specified before the
+         MSR projection drifted in.
+
+         BOOTSTRAP-ORDER GUARD (same contract as prg 003-reporting and this repo's own
+         001-man-spine-bootstrap): MRG is clock-launched and may run on a fresh dcre_man
+         before MIX/MSX/MPX have ever executed, so each view source is pre-created here
+         with a MARK_RAN tableExists guard carrying the owners' EXACT column sets and
+         constraint names (mix/msx/mpx 001-man-<leg>-resp.xml). Whichever service runs
+         first wins; the other side's guarded changesets MARK_RAN. Per-service liquibase
+         history keeps this safe.
+
+         Pick grain is (mndt_req_id), NOT the collections (emission_id, e2e): a pain.012
+         message carries exactly ONE mandate, so there is no ISR fan-out to partition.
+         That also removes the whole legacy-binding/family-fallback apparatus prg needs:
+         the mandate reply correlates on the MRR-minted MndtReqId directly.
+
+         PURE PRECEDENCE, no FSM. The "only a PBSR ACCP activates a mandate" rule, the
+         expiry predicate and the override join are mandate_effective_status (005), which
+         reads this view. Nothing here interprets a status code; it only picks the newest
+         one per leg and ranks the legs. start_date/expiry_date are projected as the
+         VARCHAR(8) CCYYMMDD the spine stores; the to_date cast belongs to 005. -->
+
+    <changeSet id="004-bootstrap-man-isr-resp-mrg" author="dcre">
+        <preConditions onFail="MARK_RAN"><not><tableExists tableName="man_isr_resp"/></not></preConditions>
+        <createTable tableName="man_isr_resp">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="response_file" type="VARCHAR(128)"><constraints nullable="false"/></column>
+            <column name="orgnl_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="mndt_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="mndt_req_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"/>
+            <column name="status" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="reason" type="VARCHAR(8)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0"><constraints nullable="false"/></column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="man_isr_resp" columnNames="response_file, mndt_req_id"
+                             constraintName="uq_man_isr_resp_file_mndt_req"/>
+    </changeSet>
+
+    <changeSet id="004-bootstrap-man-sbsr-resp-mrg" author="dcre">
+        <preConditions onFail="MARK_RAN"><not><tableExists tableName="man_sbsr_resp"/></not></preConditions>
+        <createTable tableName="man_sbsr_resp">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="response_file" type="VARCHAR(128)"><constraints nullable="false"/></column>
+            <column name="orgnl_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="mndt_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="mndt_req_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"/>
+            <column name="status" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="reason" type="VARCHAR(8)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0"><constraints nullable="false"/></column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="man_sbsr_resp" columnNames="response_file, mndt_req_id"
+                             constraintName="uq_man_sbsr_resp_file_mndt_req"/>
+    </changeSet>
+
+    <changeSet id="004-bootstrap-man-pbsr-resp-mrg" author="dcre">
+        <preConditions onFail="MARK_RAN"><not><tableExists tableName="man_pbsr_resp"/></not></preConditions>
+        <createTable tableName="man_pbsr_resp">
+            <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="response_file" type="VARCHAR(128)"><constraints nullable="false"/></column>
+            <column name="orgnl_msg_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="mndt_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="mndt_req_id" type="VARCHAR(35)"><constraints nullable="false"/></column>
+            <column name="e2e" type="VARCHAR(35)"/>
+            <column name="status" type="VARCHAR(8)"><constraints nullable="false"/></column>
+            <column name="reason" type="VARCHAR(8)"/>
+            <column name="version" type="BIGINT" defaultValueNumeric="0"><constraints nullable="false"/></column>
+            <column name="created_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+            <column name="updated_at" type="TIMESTAMPTZ" defaultValueComputed="now()">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addUniqueConstraint tableName="man_pbsr_resp" columnNames="response_file, mndt_req_id"
+                             constraintName="uq_man_pbsr_resp_file_mndt_req"/>
+    </changeSet>
+
+    <!-- Index-backed pick windows, created BEFORE the views that read them. Collections
+         learned this the hard way (SCRUM-55, live 2026-07-16): a correlated scan of the
+         ext_tx_status stack hung the AGT trigger scan for over 7 minutes on a 12,001-tx
+         parent and permanently wedged it. Each index covers its pick window exactly,
+         (partition key, then the ORDER BY leader descending), so CRDB reads the window in
+         index order instead of sorting the table. This view lands on CTV's hot path, so
+         the indexes go in up front rather than after the first production stall.
+         Per-index changesets with indexExists MARK_RAN guards (persistence.md file
+         convention): each converges independently on any reachable DB state. -->
+
+    <changeSet id="004-ix-man-isr-pick" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="man_isr_resp" indexName="ix_man_isr_pick"/></not>
+        </preConditions>
+        <createIndex tableName="man_isr_resp" indexName="ix_man_isr_pick">
+            <column name="mndt_req_id"/>
+            <column name="created_at" descending="true"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="004-ix-man-sbsr-pick" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="man_sbsr_resp" indexName="ix_man_sbsr_pick"/></not>
+        </preConditions>
+        <createIndex tableName="man_sbsr_resp" indexName="ix_man_sbsr_pick">
+            <column name="mndt_req_id"/>
+            <column name="created_at" descending="true"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="004-ix-man-pbsr-pick" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="man_pbsr_resp" indexName="ix_man_pbsr_pick"/></not>
+        </preConditions>
+        <createIndex tableName="man_pbsr_resp" indexName="ix_man_pbsr_pick">
+            <column name="mndt_req_id"/>
+            <column name="created_at" descending="true"/>
+        </createIndex>
+    </changeSet>
+
+    <!-- Latest reply per mandate request per leg, one window pass (prg's prg_*_pick
+         shape, minus the emission/legacy arms mandates do not have). created_at DESC
+         picks the newest arrival; response_file DESC is the deterministic tiebreaker for
+         same-timestamp rows, so the pick never flips between reads. The PBSR delayed
+         authentication (a second reply under <stem>-AUTH_PBSR.xml) is exactly this case:
+         both rows persist, the later one wins. -->
+
+    <changeSet id="004-mnd-isr-pick" author="dcre" runOnChange="true">
+        <createView viewName="mnd_isr_pick" replaceIfExists="true"><![CDATA[
+            SELECT u.mndt_req_id, u.mndt_id, u.status, u.reason
+            FROM (SELECT r.mndt_req_id, r.mndt_id, r.status, r.reason,
+                         row_number() OVER (PARTITION BY r.mndt_req_id
+                                            ORDER BY r.created_at DESC,
+                                                     r.response_file DESC) AS pick_rank
+                  FROM man_isr_resp r) AS u
+            WHERE u.pick_rank = 1
+        ]]></createView>
+    </changeSet>
+
+    <changeSet id="004-mnd-sbsr-pick" author="dcre" runOnChange="true">
+        <createView viewName="mnd_sbsr_pick" replaceIfExists="true"><![CDATA[
+            SELECT u.mndt_req_id, u.mndt_id, u.status, u.reason
+            FROM (SELECT r.mndt_req_id, r.mndt_id, r.status, r.reason,
+                         row_number() OVER (PARTITION BY r.mndt_req_id
+                                            ORDER BY r.created_at DESC,
+                                                     r.response_file DESC) AS pick_rank
+                  FROM man_sbsr_resp r) AS u
+            WHERE u.pick_rank = 1
+        ]]></createView>
+    </changeSet>
+
+    <changeSet id="004-mnd-pbsr-pick" author="dcre" runOnChange="true">
+        <createView viewName="mnd_pbsr_pick" replaceIfExists="true"><![CDATA[
+            SELECT u.mndt_req_id, u.mndt_id, u.status, u.reason
+            FROM (SELECT r.mndt_req_id, r.mndt_id, r.status, r.reason,
+                         row_number() OVER (PARTITION BY r.mndt_req_id
+                                            ORDER BY r.created_at DESC,
+                                                     r.response_file DESC) AS pick_rank
+                  FROM man_pbsr_resp r) AS u
+            WHERE u.pick_rank = 1
+        ]]></createView>
+    </changeSet>
+
+    <!-- The precedence view. Rows come from the MRR request spine (R-04: the spine is the
+         request-leg authority), never from a reply table, so a mandate request with no
+         reply yet still reads, as PDNG at stage_rank 1. The client dimension is
+         mandate_request_header.client_token, exactly as prg's ext_tx_status derives client
+         from tx_header.client_token. stage_rank mirrors prg's: 4 PBSR, 3 SBSR, 2 ISR,
+         1 no reply.
+
+         Spine entries whose mndt_req_id is NULL (the first-wins loser of an intra-file
+         duplicate, mrr B1a dup_in_file) surface here as unanswered PDNG rows: this view
+         projects the spine as it stands and does not adjudicate admissibility, which is
+         MRV's request-leg concern. -->
+
+    <changeSet id="004-mnd-ext-status" author="dcre" runOnChange="true">
+        <createView viewName="mnd_ext_status" replaceIfExists="true"><![CDATA[
+            SELECT h.client_token AS client,
+                   e.mandate_ref,
+                   e.mndt_req_id,
+                   e.contract_ref,
+                   e.debtor_account,
+                   e.creditor_account,
+                   e.max_collection_amount,
+                   e.start_date,
+                   e.expiry_date,
+                   COALESCE(pp.status, sp.status, ip.status, 'PDNG') AS raw_status,
+                   COALESCE(pp.reason, sp.reason, ip.reason)         AS reason,
+                   CASE WHEN pp.status IS NOT NULL THEN 4
+                        WHEN sp.status IS NOT NULL THEN 3
+                        WHEN ip.status IS NOT NULL THEN 2
+                        ELSE 1 END                                   AS stage_rank
+            FROM mandate_request_entry e
+            JOIN mandate_request_header h ON h.arrival_id = e.arrival_id
+            LEFT JOIN mnd_isr_pick  ip ON ip.mndt_req_id = e.mndt_req_id
+            LEFT JOIN mnd_sbsr_pick sp ON sp.mndt_req_id = e.mndt_req_id
+            LEFT JOIN mnd_pbsr_pick pp ON pp.mndt_req_id = e.mndt_req_id
+        ]]></createView>
+    </changeSet>
+
+</databaseChangeLog>
