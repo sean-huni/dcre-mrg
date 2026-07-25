@@ -191,20 +191,10 @@ class MandateEffectiveStatusIT extends AbstractMrgCrdbIT {
                 "state", "start_date", "expiry_date", "max_collection_amount");
     }
 
-    private String stateOf(final String mndtReqId) {
-        return jdbc.queryForObject("SELECT state FROM mandate_effective_status"
-                + " WHERE mndt_req_id = ?", String.class, mndtReqId);
-    }
-
     /** State of a spine entry that was never assigned a mandate request id (MRR B1a loser). */
     private String unassignedStateOf(final String mandateRef) {
         return jdbc.queryForObject("SELECT state FROM mandate_effective_status"
                 + " WHERE mandate_ref = ? AND mndt_req_id IS NULL", String.class, mandateRef);
-    }
-
-    private String reasonOf(final String mndtReqId) {
-        return jdbc.queryForObject("SELECT reason FROM mandate_effective_status"
-                + " WHERE mndt_req_id = ?", String.class, mndtReqId);
     }
 
     private Boolean noRetryOf(final String mndtReqId) {

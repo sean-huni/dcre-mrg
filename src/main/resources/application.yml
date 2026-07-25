@@ -7,6 +7,12 @@ spring:
   threads:
     virtual:
       enabled: true
+  batch:
+    # SCRUM-91: MRG now ships two jobs (clock-window state-delta report / suspension sweep
+    # absorbed from msrSuspendJob); AGT selects one per launch. Default = the report job;
+    # the man clock overrides DCRE_MRG_JOB_NAME with mrgSuspendJob.
+    job:
+      name: ${DCRE_MRG_JOB_NAME:mrgJob}
   datasource:
     url: ${DCRE_DB_URL:jdbc:postgresql://localhost:26257/dcre_man?sslmode=disable}
     username: ${DCRE_DB_USER:root}
@@ -36,6 +42,21 @@ dcre:
   agtops-db-password: ${DCRE_AGTOPS_DB_PASSWORD:}
   exchange-root: ${DCRE_EXCHANGE_ROOT:../../../../../infra/dcre-infra/exchange}
   amount-scale: ${DCRE_AMOUNT_SCALE:2}
+  # Second, READ-ONLY datasource pointed at the collections DB (dcre_col) for the suspension
+  # sweep (HeartbeatDatasourceConfig pattern: inline SimpleDriverDataSource, never a
+  # DataSource bean, so Liquibase/Batch/Spring-Data stay on the primary dcre_man). Moved here
+  # verbatim from msr with the sweep (SCRUM-91).
+  col-db-url: ${DCRE_COL_DB_URL:jdbc:postgresql://localhost:26257/dcre_col?sslmode=disable}
+  col-db-user: ${DCRE_COL_DB_USER:root}
+  col-db-password: ${DCRE_COL_DB_PASSWORD:}
+  msr:
+    # Consecutive terminal-failed collections (dcre_col) that suspend an ACCP mandate.
+    # DELIBERATELY still keyed dcre.msr.*: carried over with the sweep so the operational
+    # contract does not change under whoever tuned it. Verified 2026-07-25: infra/dcre-infra
+    # sets no DCRE_MSR_SUSPEND_AFTER and launches no msrSuspendJob, so nothing external is
+    # pinned to the name today and a rename is free whenever the register decides to make
+    # it (plan Task 10).
+    suspend-after: ${DCRE_MSR_SUSPEND_AFTER:3}
   mrg:
     # StagedWrite v1 reads the mandate state-delta in bounded keyset slices of this size and
     # advances the watermark/ledger slice by slice; StreamedPsrWrite is the future path if

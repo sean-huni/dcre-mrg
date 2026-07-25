@@ -26,7 +26,7 @@ import java.util.UUID;
         "dcre.exchange-root=build/test-exchange", "DCRE_EXCHANGE_ROOT=build/test-exchange"})
 public abstract class AbstractMrgCrdbIT {
 
-    static final CockroachContainer CRDB =
+    protected static final CockroachContainer CRDB =
             new CockroachContainer(DockerImageName.parse("cockroachdb/cockroach:v26.2.3"));
 
     static {
@@ -83,6 +83,24 @@ public abstract class AbstractMrgCrdbIT {
     protected void seedPbsrAt(final String mndtReqId, final String status, final String reason,
                               final String responseFile, final String createdAt) {
         ManLegFixture.seedLeg(jdbc, "man_pbsr_resp", mndtReqId, status, reason, responseFile, createdAt);
+    }
+
+    /** The derived state of the entry carrying this mandate request id. */
+    protected String stateOf(final String mndtReqId) {
+        return jdbc.queryForObject("SELECT state FROM mandate_effective_status"
+                + " WHERE mndt_req_id = ?", String.class, mndtReqId);
+    }
+
+    protected String reasonOf(final String mndtReqId) {
+        return jdbc.queryForObject("SELECT reason FROM mandate_effective_status"
+                + " WHERE mndt_req_id = ?", String.class, mndtReqId);
+    }
+
+    /** Override rows standing for ONE mandate, across every source. */
+    protected int overrideCountOf(final String mandateRef) {
+        final Integer n = jdbc.queryForObject("SELECT count(*) FROM mandate_override"
+                + " WHERE mandate_ref = ?", Integer.class, mandateRef);
+        return n == null ? -1 : n;
     }
 
     /** Rows a view yields for ONE mandate. Scoped by mandate_ref: the suite shares a container. */
