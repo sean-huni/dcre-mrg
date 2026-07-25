@@ -9,6 +9,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.CockroachContainer;
 import org.testcontainers.utility.DockerImageName;
 import za.co.fnb.dcre.mrg.data.ManLegFixture;
+import za.co.fnb.dcre.mrg.data.ManSpineFixture;
 import za.co.fnb.dcre.mrg.data.model.ManReportEntity;
 import za.co.fnb.dcre.mrg.data.repo.ManReportRepo;
 
@@ -126,6 +127,35 @@ class ManStateDeltaServiceIT {
                 .isEqualTo(3L);
         assertThat(jdbc.queryForObject("SELECT report_type FROM man_report WHERE file_name=?",
                 String.class, client + "_MSD_w1.txt")).isEqualTo("SCHEDULED");
+    }
+
+    // --- (1b) the delta is per MANDATE, not per instruction (D5b grain defect) ---
+
+    /**
+     * The grain defect delivered end to end. One mandate with an accepted CREATE and a rejected
+     * AMEND must produce ONE MND line and ONE watermark row. At instruction grain the same
+     * window handed the client two contradictory lines for one mandate (ACCP and RJCT), fired
+     * upsertWatermark twice against a single (client, mandate_ref) row so the surviving
+     * last_state was whichever landed last, and then flapped: the next window re-reported the
+     * OTHER state, for ever, with no zero-duplicate audit able to see it.
+     */
+    @Test
+    void aMultiInstructionMandateIsReportedOncePerWindow() throws Exception {
+        final String client = "FNBT11";
+        cleanExchange(client, "w1", "w2");
+        final String ref = ref(client, 1);
+        seedMandate(client, ref, "ACCP");
+        ManSpineFixture.seedInstruction(jdbc, client, ref, ref + "-A", "AMEND");
+        ManLegFixture.seedLeg(jdbc, "man_pbsr_resp", ref + "-A", "RJCT", "MD01",
+                ref + "-A_PBSR.xml", null);
+
+        assertThat(Files.readAllLines(service.window(client, "w1", false).orElseThrow()))
+                .containsExactly("MSD|" + client + "|w1", "MND|" + ref + "|ACCP", "END|1");
+        assertThat(watermarkCount(client)).isEqualTo(1L);
+
+        // and nothing is left to flap: the next window is quiet
+        assertThat(Files.readAllLines(service.window(client, "w2", false).orElseThrow()))
+                .containsExactly("MSD|" + client + "|w2", "HB|" + "DCRE".concat("0".repeat(29)), "END|0");
     }
 
     // --- (2) unchanged state is not re-reported; a single flip reports exactly that mandate ---

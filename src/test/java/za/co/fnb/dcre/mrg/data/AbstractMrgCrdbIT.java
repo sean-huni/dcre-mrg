@@ -110,6 +110,17 @@ public abstract class AbstractMrgCrdbIT {
                 + " WHERE mndt_req_id = ?", String.class, mndtReqId);
     }
 
+    /** The MANDATE's state: the per-mandate collapse, one row per mandate_ref (007). */
+    protected String currentStateOf(final String mandateRef) {
+        return jdbc.queryForObject("SELECT state FROM mandate_current_status"
+                + " WHERE mandate_ref = ?", String.class, mandateRef);
+    }
+
+    protected String currentReasonOf(final String mandateRef) {
+        return jdbc.queryForObject("SELECT reason FROM mandate_current_status"
+                + " WHERE mandate_ref = ?", String.class, mandateRef);
+    }
+
     /** Override rows standing for ONE mandate, across every source. */
     protected int overrideCountOf(final String mandateRef) {
         final Integer n = jdbc.queryForObject("SELECT count(*) FROM mandate_override"

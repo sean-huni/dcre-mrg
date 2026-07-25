@@ -187,6 +187,65 @@ class ManSuspensionIT extends AbstractMrgCrdbIT {
         assertThat(stateOf("MREQ-56")).isEqualTo("SUSPENDED");
     }
 
+    /**
+     * The grain defect in the sweep's candidate read (found by D5b). findActiveRefs asks "which
+     * mandates are EFFECTIVELY active", a per-MANDATE question, and read the per-INSTRUCTION
+     * view: a mandate whose CREATE was accepted stayed a candidate for ever, because an accepted
+     * CANCEL freezes the MANDATE while the CREATE instruction's own row is still ACCP. The sweep
+     * then wrote a SUSPENDED override onto a cancelled mandate, and since an explicit override
+     * outranks everything derived (R-09) that resurrects a dead mandate into SUSPENDED, which is
+     * the state the client is then told and the state CTV admits against.
+     */
+    @Test
+    void aCancelledMandateIsNotASuspensionCandidate() {
+        seedActive("CLS08", "MND-57", "MREQ-57A");
+        seedInstruction("CLS08", "MND-57", "MREQ-57B", "CANCEL");
+        seedPbsr("MREQ-57B", "ACCP", null);
+        seedOutcomes("MND-57", "RJCT", "RJCT", "RJCT");
+
+        service.sweep();
+
+        assertThat(overrideCountOf("MND-57")).isZero();
+        assertThat(currentStateOf("MND-57")).isEqualTo("CANC");
+    }
+
+    /**
+     * Same defect, the other terminal shape: MD07 (system_action TERMINATE_NOW, end customer
+     * deceased) lands on a LATER instruction, so the CREATE row stays ACCP at instruction grain
+     * while the MANDATE is terminated. A terminated mandate must never be suspended.
+     */
+    @Test
+    void anMd07TerminatedMandateIsNotASuspensionCandidate() {
+        seedActive("CLS09", "MND-58", "MREQ-58A");
+        seedInstruction("CLS09", "MND-58", "MREQ-58B", "AMEND");
+        seedPbsr("MREQ-58B", "RJCT", "MD07");
+        seedOutcomes("MND-58", "RJCT", "RJCT", "RJCT");
+
+        service.sweep();
+
+        assertThat(overrideCountOf("MND-58")).isZero();
+        assertThat(currentStateOf("MND-58")).isEqualTo("RJCT");
+    }
+
+    /**
+     * The flip side, so the fix is a re-grain and not a narrowing: a rejected AMEND rejects the
+     * INSTRUCTION only. The mandate is still live, still failing collections, and still a
+     * candidate. Reading the collapse rather than any single instruction is what makes both
+     * this and the two cases above come out right.
+     */
+    @Test
+    void aLiveMandateWithARejectedAmendIsStillASuspensionCandidate() {
+        seedActive("CLS10", "MND-59", "MREQ-59A");
+        seedInstruction("CLS10", "MND-59", "MREQ-59B", "AMEND");
+        seedPbsr("MREQ-59B", "RJCT", "MD01");
+        seedOutcomes("MND-59", "RJCT", "RJCT", "RJCT");
+
+        service.sweep();
+
+        assertThat(overrideCountOf("MND-59")).isEqualTo(1);
+        assertThat(currentStateOf("MND-59")).isEqualTo("SUSPENDED");
+    }
+
     private void seedActive(final String client, final String mandateRef, final String mndtReqId) {
         seedSpine(client, mandateRef, mndtReqId);
         seedPbsr(mndtReqId, "ACCP", null);

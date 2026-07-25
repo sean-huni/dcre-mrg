@@ -196,14 +196,4 @@ class MandateCurrentStatusIT extends AbstractMrgCrdbIT {
         assertThat(row.get("state")).isEqualTo("ACCP");
         assertThat(row.get("expiry_date")).isEqualTo("20991231");
     }
-
-    private String currentStateOf(final String mandateRef) {
-        return jdbc.queryForObject("SELECT state FROM mandate_current_status"
-                + " WHERE mandate_ref = ?", String.class, mandateRef);
-    }
-
-    private String currentReasonOf(final String mandateRef) {
-        return jdbc.queryForObject("SELECT reason FROM mandate_current_status"
-                + " WHERE mandate_ref = ?", String.class, mandateRef);
-    }
 }

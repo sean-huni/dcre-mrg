@@ -10,8 +10,9 @@ import java.util.UUID;
 
 /**
  * The ONE writer in the mandate response leg (SCRUM-91). Everything else about a mandate's
- * state is derived by mandate_effective_status; this sink exists only for signals a
- * CockroachDB view cannot reach, today just suspension, whose evidence lives in dcre_col.
+ * state is derived: per INSTRUCTION by mandate_effective_status, per MANDATE by the
+ * mandate_current_status collapse. This sink exists only for signals a CockroachDB view
+ * cannot reach, today just suspension, whose evidence lives in dcre_col.
  *
  * <p>The write is guarded on the FULL business identity (mandate_ref, source): never UPSERT
  * on the PK, because CRDB resolves UPSERT on the PK only. Keying on mandate_ref alone would
