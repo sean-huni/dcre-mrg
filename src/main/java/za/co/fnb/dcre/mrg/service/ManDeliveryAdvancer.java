@@ -6,8 +6,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import za.co.fnb.dcre.mrg.data.model.ManStateRow;
-import za.co.fnb.dcre.mrg.data.repo.ManDeliveryLedgerRepo;
-import za.co.fnb.dcre.mrg.data.repo.ManWatermarkRepo;
 import za.co.fnb.dcre.mrg.domain.ManReportLayout;
 
 import java.io.BufferedReader;
@@ -26,21 +24,20 @@ import java.util.UUID;
  * mandate whose state moved AFTER the file was written is never ledgered here;
  * it rides the next window. The same path replays after a crash: a standing
  * target is advanced as written (ledger ON CONFLICT DO NOTHING + idempotent
- * watermark UPSERT make it a zero-dup no-op).
+ * watermark UPSERT make it a zero-dup no-op). What ONE advanced mandate durably
+ * records is {@link ManAdvanceRecorder}'s responsibility, not this class's.
  */
 @Service
 public class ManDeliveryAdvancer {
 
-    private final ManWatermarkRepo watermarks;
-    private final ManDeliveryLedgerRepo ledger;
+    private final ManAdvanceRecorder recorder;
     private final TransactionTemplate advanceTx;
     private final int sliceSize;
 
-    public ManDeliveryAdvancer(final ManWatermarkRepo watermarks, final ManDeliveryLedgerRepo ledger,
+    public ManDeliveryAdvancer(final ManAdvanceRecorder recorder,
                                final PlatformTransactionManager txManager,
                                @Value("${dcre.mrg.slice-size:5000}") final int sliceSize) {
-        this.watermarks = watermarks;
-        this.ledger = ledger;
+        this.recorder = recorder;
         // Each advance attempt needs its OWN transaction: a CRDB 40001 abort poisons the
         // surrounding transaction (25P02 on any further statement), so retrying inside a
         // shared transaction can never succeed.
@@ -71,13 +68,12 @@ public class ManDeliveryAdvancer {
         }
     }
 
-    /** Ledger + watermark per advanced mandate, atomically per slice (the ledger is the delivery authority). */
+    /** History + ledger + watermark per advanced mandate, atomically per slice (see the recorder). */
     private void advanceSlice(final String client, final UUID reportId, final List<ManStateRow> slice) {
         CrdbRetry.run("advance client=%s from=%s".formatted(client, slice.getFirst().mandateRef()),
                 () -> advanceTx.executeWithoutResult(status -> {
                     for (final ManStateRow row : slice) {
-                        ledger.record(reportId, client, row.mandateRef(), row.state(), null);
-                        watermarks.upsertWatermark(client, row.mandateRef(), row.state());
+                        recorder.record(client, reportId, row);
                     }
                 }));
     }

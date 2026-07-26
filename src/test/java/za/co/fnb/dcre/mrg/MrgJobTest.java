@@ -14,11 +14,11 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.CockroachContainer;
 import org.testcontainers.utility.DockerImageName;
+import za.co.fnb.dcre.mrg.data.ManLegFixture;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,19 +51,9 @@ class MrgJobTest {
     @Autowired
     JdbcTemplate jdbc;
 
+    /** Spine + the reply that makes the mandate READ this state (SCRUM-91: state is derived). */
     void seedMandate(final String client, final String mandateRef, final String state) {
-        final UUID arrival = UUID.randomUUID();
-        jdbc.update("INSERT INTO mandate_request_header (arrival_id, msg_id_raw, msg_id, created_ts,"
-                        + " entry_count, destination_id, business_date, client_token, layout_version)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?)",
-                arrival, "MSG" + mandateRef, "MSG" + mandateRef, "20260722080000", 1, "ONHOST",
-                "20260722", client, 1);
-        jdbc.update("INSERT INTO mandate_request_entry (arrival_id, sequence, record_type, action_code,"
-                        + " mandate_ref, currency, max_collection_amount_raw, max_collection_amount)"
-                        + " VALUES (?,?,?,?,?,?,?,?)",
-                arrival, 1, "MD", "CREATE", mandateRef, "ZAR", "1000", 10.00);
-        jdbc.update("INSERT INTO mandate (mandate_ref, contract_ref, creditor_account, state)"
-                + " VALUES (?,?,?,?)", mandateRef, "CTR" + mandateRef, "62000000010", state);
+        ManLegFixture.seedMandateInState(jdbc, client, mandateRef, state);
     }
 
     JobParameters window(final String client, final String window) {

@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.TransientDataAccessException;
 
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
 
 /**
  * Bounded retry for CockroachDB serialization aborts (SQLSTATE 40001), which
@@ -24,10 +25,17 @@ final class CrdbRetry {
     }
 
     static void run(final String op, final Runnable body) {
+        call(op, () -> {
+            body.run();
+            return null;
+        });
+    }
+
+    /** Same bounded retry for an op whose result the caller needs (row counts, ids). */
+    static <T> T call(final String op, final Supplier<T> body) {
         for (int attempt = 1; ; attempt++) {
             try {
-                body.run();
-                return;
+                return body.get();
             } catch (final TransientDataAccessException e) {
                 if (attempt >= MAX_ATTEMPTS) {
                     throw e;

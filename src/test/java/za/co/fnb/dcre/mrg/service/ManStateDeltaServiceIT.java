@@ -8,6 +8,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.CockroachContainer;
 import org.testcontainers.utility.DockerImageName;
+import za.co.fnb.dcre.mrg.data.ManLegFixture;
+import za.co.fnb.dcre.mrg.data.ManSpineFixture;
 import za.co.fnb.dcre.mrg.data.model.ManReportEntity;
 import za.co.fnb.dcre.mrg.data.repo.ManReportRepo;
 
@@ -15,7 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -65,24 +66,17 @@ class ManStateDeltaServiceIT {
     @Autowired
     JdbcTemplate jdbc;
 
-    /** Seeds one mandate projection row plus the spine header/entry that carry the client dimension. */
+    /**
+     * Seeds the spine plus the reply that makes the mandate READ {@code state}. There is no
+     * projection row to write any more (SCRUM-91): state is derived, so the fixture states
+     * the reply, not the answer.
+     */
     void seedMandate(final String client, final String mandateRef, final String state) {
-        final UUID arrival = UUID.randomUUID();
-        jdbc.update("INSERT INTO mandate_request_header (arrival_id, msg_id_raw, msg_id, created_ts,"
-                        + " entry_count, destination_id, business_date, client_token, layout_version)"
-                        + " VALUES (?,?,?,?,?,?,?,?,?)",
-                arrival, "MSG" + mandateRef, "MSG" + mandateRef, "20260722080000", 1, "ONHOST",
-                "20260722", client, 1);
-        jdbc.update("INSERT INTO mandate_request_entry (arrival_id, sequence, record_type, action_code,"
-                        + " mandate_ref, currency, max_collection_amount_raw, max_collection_amount)"
-                        + " VALUES (?,?,?,?,?,?,?,?)",
-                arrival, 1, "MD", "CREATE", mandateRef, "ZAR", "1000", 10.00);
-        jdbc.update("INSERT INTO mandate (mandate_ref, contract_ref, creditor_account, state)"
-                + " VALUES (?,?,?,?)", mandateRef, "CTR" + mandateRef, "62000000010", state);
+        ManLegFixture.seedMandateInState(jdbc, client, mandateRef, state);
     }
 
     void flip(final String mandateRef, final String state) {
-        jdbc.update("UPDATE mandate SET state=?, updated_at=now() WHERE mandate_ref=?", state, mandateRef);
+        ManLegFixture.advanceTo(jdbc, mandateRef, state);
     }
 
     String ref(final String client, final int i) {
@@ -133,6 +127,40 @@ class ManStateDeltaServiceIT {
                 .isEqualTo(3L);
         assertThat(jdbc.queryForObject("SELECT report_type FROM man_report WHERE file_name=?",
                 String.class, client + "_MSD_w1.txt")).isEqualTo("SCHEDULED");
+    }
+
+    // --- (1b) the delta is per MANDATE, not per instruction (D5b grain defect) ---
+
+    /**
+     * The grain defect delivered end to end. One mandate with an accepted CREATE and a rejected
+     * AMEND must produce ONE MND line and ONE watermark row. At instruction grain the same
+     * window handed the client two contradictory lines for one mandate (ACCP and RJCT), fired
+     * upsertWatermark twice against a single (client, mandate_ref) row so the surviving
+     * last_state was whichever landed last, and then flapped: the next window re-reported the
+     * OTHER state, for ever, with no zero-duplicate audit able to see it.
+     *
+     * <p>The single reported state is RJCT (Sean ruling, 2026-07-26: the latest Fintegrate Tx
+     * response is the true response, so a leg rejection is terminal for the MANDATE, which is
+     * also what MSR's FSM did). The one-line-per-mandate, one-watermark and no-flap coverage
+     * this test was written for is unchanged: only the state value moved.</p>
+     */
+    @Test
+    void aMultiInstructionMandateIsReportedOncePerWindow() throws Exception {
+        final String client = "FNBT11";
+        cleanExchange(client, "w1", "w2");
+        final String ref = ref(client, 1);
+        seedMandate(client, ref, "ACCP");
+        ManSpineFixture.seedInstruction(jdbc, client, ref, ref + "-A", "AMEND");
+        ManLegFixture.seedLeg(jdbc, "man_pbsr_resp", ref + "-A", "RJCT", "MD01",
+                ref + "-A_PBSR.xml", null);
+
+        assertThat(Files.readAllLines(service.window(client, "w1", false).orElseThrow()))
+                .containsExactly("MSD|" + client + "|w1", "MND|" + ref + "|RJCT", "END|1");
+        assertThat(watermarkCount(client)).isEqualTo(1L);
+
+        // and nothing is left to flap: the next window is quiet
+        assertThat(Files.readAllLines(service.window(client, "w2", false).orElseThrow()))
+                .containsExactly("MSD|" + client + "|w2", "HB|" + "DCRE".concat("0".repeat(29)), "END|0");
     }
 
     // --- (2) unchanged state is not re-reported; a single flip reports exactly that mandate ---
