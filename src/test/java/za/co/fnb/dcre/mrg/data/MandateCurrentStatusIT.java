@@ -223,6 +223,32 @@ class MandateCurrentStatusIT extends AbstractMrgCrdbIT {
     }
 
     /**
+     * A TERMINATE_NOW reason does not need a rejecting leg to terminate the mandate. MSR's
+     * MandateStateMachine checked isTerminateNow() BEFORE it looked at the leg at all, so an
+     * ACCEPTANCE carrying MD07 (end customer deceased) still terminated the mandate: there is
+     * nobody left to collect from, whatever Fintegrate accepted.
+     *
+     * <p>This test exists because a reason invariant applied at INSTRUCTION grain silently
+     * disabled 007's arm 1. Arm 1 reads bool_or(rc.system_action = 'TERMINATE_NOW') over a join
+     * ON rc.code = m.reason, where m is mandate_effective_status. Nulling reason on ACCP rows in
+     * 005 made that join blind: this exact shape (PBSR ACCP + MD07) reached 007 with reason NULL,
+     * arm 1 never fired, and the mandate read ACCP. That is a fail-open on a deceased-customer
+     * termination. 007 sanitises in its OUTER projection instead, after the aggregate has already
+     * computed the state, so arm 1 still sees the raw reason and stays safe.</p>
+     */
+    @Test
+    void anAcceptedLegCarryingATerminateNowReasonStillReadsRjct() {
+        seedSpine("CL01", "MND-66", "MREQ-66");
+        seedPbsr("MREQ-66", "ACCP", "MD07");
+
+        // instruction grain accepts: the leg said ACCP and 005 reports what the leg said
+        assertThat(stateOf("MREQ-66")).isEqualTo("ACCP");
+        // the MANDATE terminates: arm 1 must still see MD07 behind that acceptance
+        assertThat(currentStateOf("MND-66")).isEqualTo("RJCT");
+        assertThat(currentReasonOf("MND-66")).isEqualTo("MD07");
+    }
+
+    /**
      * The column contract is pinned here as well as in MandateEffectiveStatusIT, because the
      * reason invariant restructures the 007 body into a subselect wrapping the aggregate and a
      * restructure is exactly how a column list silently drifts. One row per mandate and the
