@@ -136,6 +136,11 @@ class ManSuspensionIT extends AbstractMrgCrdbIT {
      * The live case for the mandate_override_pick fan-out guard: a swept mandate that ops
      * later acts on carries TWO override rows, neither clobbering the other, and STILL
      * reads as exactly one row through the derived view and through CTV's contract.
+     *
+     * <p>The ops row is stamped relative to NOW, not at a literal instant. The sweep writes
+     * its own row at the database's now(), so a hardcoded effective_from is a date bomb: it
+     * won the pick until wall clock passed it and then silently lost, which is how this test
+     * was found failing on the pristine tree on 2026-07-26 (fixed here, see the report).</p>
      */
     @Test
     void anOpsOverrideAndACollectionFailureCoexistAsOneEffectiveRow() {
@@ -143,7 +148,7 @@ class ManSuspensionIT extends AbstractMrgCrdbIT {
         seedOutcomes("MND-54", "RJCT", "RJCT", "CANC");
 
         service.sweep();
-        seedOverride("MND-54", "CANC", "MD07", "OPS", "2026-07-26T08:00:00Z");
+        seedOverride("MND-54", "CANC", "MD07", "OPS", Instant.now().plusSeconds(60).toString());
 
         assertThat(overrideCountOf("MND-54")).isEqualTo(2);
         assertThat(rowCountOf("mandate_effective_status", "MND-54")).isEqualTo(1);
@@ -228,13 +233,20 @@ class ManSuspensionIT extends AbstractMrgCrdbIT {
     }
 
     /**
-     * The flip side, so the fix is a re-grain and not a narrowing: a rejected AMEND rejects the
-     * INSTRUCTION only. The mandate is still live, still failing collections, and still a
-     * candidate. Reading the collapse rather than any single instruction is what makes both
-     * this and the two cases above come out right.
+     * INVERTED 2026-07-26. This case used to assert that a rejected AMEND rejects the
+     * INSTRUCTION only and leaves the mandate a live suspension candidate. Sean ruled the
+     * latest Fintegrate Tx response is the true response, which is also what MSR's FSM did
+     * (MandateStateMachine.finalLeg returns RJCT on isReject() with no action_code test, and
+     * ACCP is not terminal), so a rejected AMEND is mandate-terminal. A terminal mandate is
+     * not a suspension candidate: the sweep must leave it alone exactly as it leaves a
+     * cancelled or MD07-terminated one alone.
+     *
+     * <p>The other half of the original coverage stands unchanged: the sweep reads the
+     * per-MANDATE collapse, never a single instruction, so the CREATE instruction sitting at
+     * ACCP does not make this mandate a candidate.</p>
      */
     @Test
-    void aLiveMandateWithARejectedAmendIsStillASuspensionCandidate() {
+    void aMandateWithARejectedAmendIsNoLongerASuspensionCandidate() {
         seedActive("CLS10", "MND-59", "MREQ-59A");
         seedInstruction("CLS10", "MND-59", "MREQ-59B", "AMEND");
         seedPbsr("MREQ-59B", "RJCT", "MD01");
@@ -242,8 +254,9 @@ class ManSuspensionIT extends AbstractMrgCrdbIT {
 
         service.sweep();
 
-        assertThat(overrideCountOf("MND-59")).isEqualTo(1);
-        assertThat(currentStateOf("MND-59")).isEqualTo("SUSPENDED");
+        assertThat(stateOf("MREQ-59A")).isEqualTo("ACCP");
+        assertThat(overrideCountOf("MND-59")).isZero();
+        assertThat(currentStateOf("MND-59")).isEqualTo("RJCT");
     }
 
     private void seedActive(final String client, final String mandateRef, final String mndtReqId) {

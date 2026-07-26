@@ -118,41 +118,64 @@
          That is the correct grain for reporting what happened to each instruction, and it
          is the exact mirror of collections' ext_tx_status. Consumers that need ONE row per
          mandate (CTV, the 1:1-live check, the parity gate) read mandate_current_status
-         (007), which collapses these rows through the FSM. action_code is carried so that
-         collapse can tell a rejected AMEND from a rejected CREATE. -->
+         (007), which collapses these rows through the FSM. action_code is carried for
+         per-INSTRUCTION reporting only, and is deliberately NOT used by the 007 collapse:
+         rejection is mandate-scoped there (Sean ruling, 2026-07-26; see 007's arm 4).
+
+         reason is NULL whenever this row's computed state is ACCP (Sean invariant,
+         2026-07-26). A pain.012 ACCP can still carry an advisory code, and the plain
+         COALESCE(o.reason, x.reason) published it verbatim, so an accepted instruction read
+         as if something about it had failed. The state is untouched: only the reason is
+         suppressed, and only on ACCP. -->
+
     <changeSet id="005-mandate-effective-status" author="dcre" runOnChange="true">
         <createView viewName="mandate_effective_status" replaceIfExists="true"><![CDATA[
-            SELECT x.client,
-                   x.mandate_ref,
-                   x.mndt_req_id,
-                   x.contract_ref,
-                   x.debtor_account,
-                   x.creditor_account,
-                   x.max_collection_amount,
-                   x.start_date,
-                   x.expiry_date,
-                   x.raw_status,
-                   x.stage_rank,
-                   CASE
-                     WHEN o.state IS NOT NULL                        THEN o.state
-                     WHEN x.raw_status = 'RJCT'                      THEN 'RJCT'
-                     WHEN x.raw_status = 'CANC'                      THEN 'CANC'
-                     WHEN x.stage_rank = 1
-                          AND x.raw_status NOT IN ('MRV_PASS', 'PDNG')
-                                                                     THEN 'RJCT'
-                     WHEN x.stage_rank = 4 AND x.raw_status = 'ACCP'
-                          AND x.expiry_date IS NOT NULL AND x.expiry_date <> ''
-                          AND to_date(x.expiry_date, 'YYYYMMDD') < current_date
-                                                                     THEN 'EXPIRED'
-                     WHEN x.stage_rank = 4 AND x.raw_status = 'ACCP' THEN 'ACCP'
-                     ELSE 'PDNG'
-                   END AS state,
-                   COALESCE(o.reason, x.reason) AS reason,
-                   COALESCE(rc.system_action IN ('NO_RETRY', 'PERMANENT_FAIL'), false) AS no_retry,
-                   x.action_code
-            FROM mnd_ext_status x
-            LEFT JOIN mandate_override_pick o ON o.mandate_ref = x.mandate_ref
-            LEFT JOIN mandate_reason_code rc ON rc.code = COALESCE(o.reason, x.reason)
+            SELECT e.client,
+                   e.mandate_ref,
+                   e.mndt_req_id,
+                   e.contract_ref,
+                   e.debtor_account,
+                   e.creditor_account,
+                   e.max_collection_amount,
+                   e.start_date,
+                   e.expiry_date,
+                   e.raw_status,
+                   e.stage_rank,
+                   e.state,
+                   CASE WHEN e.state = 'ACCP' THEN NULL ELSE e.reason END AS reason,
+                   e.no_retry,
+                   e.action_code
+            FROM (SELECT x.client,
+                         x.mandate_ref,
+                         x.mndt_req_id,
+                         x.contract_ref,
+                         x.debtor_account,
+                         x.creditor_account,
+                         x.max_collection_amount,
+                         x.start_date,
+                         x.expiry_date,
+                         x.raw_status,
+                         x.stage_rank,
+                         CASE
+                           WHEN o.state IS NOT NULL                        THEN o.state
+                           WHEN x.raw_status = 'RJCT'                      THEN 'RJCT'
+                           WHEN x.raw_status = 'CANC'                      THEN 'CANC'
+                           WHEN x.stage_rank = 1
+                                AND x.raw_status NOT IN ('MRV_PASS', 'PDNG')
+                                                                           THEN 'RJCT'
+                           WHEN x.stage_rank = 4 AND x.raw_status = 'ACCP'
+                                AND x.expiry_date IS NOT NULL AND x.expiry_date <> ''
+                                AND to_date(x.expiry_date, 'YYYYMMDD') < current_date
+                                                                           THEN 'EXPIRED'
+                           WHEN x.stage_rank = 4 AND x.raw_status = 'ACCP' THEN 'ACCP'
+                           ELSE 'PDNG'
+                         END AS state,
+                         COALESCE(o.reason, x.reason) AS reason,
+                         COALESCE(rc.system_action IN ('NO_RETRY', 'PERMANENT_FAIL'), false) AS no_retry,
+                         x.action_code
+                  FROM mnd_ext_status x
+                  LEFT JOIN mandate_override_pick o ON o.mandate_ref = x.mandate_ref
+                  LEFT JOIN mandate_reason_code rc ON rc.code = COALESCE(o.reason, x.reason)) AS e
         ]]></createView>
     </changeSet>
 

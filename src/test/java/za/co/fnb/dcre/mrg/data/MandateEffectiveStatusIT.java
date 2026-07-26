@@ -87,6 +87,21 @@ class MandateEffectiveStatusIT extends AbstractMrgCrdbIT {
         assertThat(stateOf("MREQ-17")).isEqualTo("ACCP");
     }
 
+    /**
+     * ACCP implies a NULL reason (Sean invariant, 2026-07-26), at instruction grain too. A
+     * pain.012 ACCP can still carry an advisory code, and COALESCE(o.reason, x.reason)
+     * published it verbatim, so an accepted instruction read as if something about it had
+     * failed. The state is unaffected: only the reason is suppressed.
+     */
+    @Test
+    void anAccpInstructionPublishesNoReason() {
+        seedSpine("CL01", "MND-25", "MREQ-25");
+        seedPbsr("MREQ-25", "ACCP", "MD01");
+
+        assertThat(stateOf("MREQ-25")).isEqualTo("ACCP");
+        assertThat(reasonOf("MREQ-25")).isNull();
+    }
+
     @Test
     void anOverrideBeatsTheDerivedState() {
         seedSpine("CL01", "MND-18", "MREQ-18");

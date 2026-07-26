@@ -138,6 +138,11 @@ class ManStateDeltaServiceIT {
      * upsertWatermark twice against a single (client, mandate_ref) row so the surviving
      * last_state was whichever landed last, and then flapped: the next window re-reported the
      * OTHER state, for ever, with no zero-duplicate audit able to see it.
+     *
+     * <p>The single reported state is RJCT (Sean ruling, 2026-07-26: the latest Fintegrate Tx
+     * response is the true response, so a leg rejection is terminal for the MANDATE, which is
+     * also what MSR's FSM did). The one-line-per-mandate, one-watermark and no-flap coverage
+     * this test was written for is unchanged: only the state value moved.</p>
      */
     @Test
     void aMultiInstructionMandateIsReportedOncePerWindow() throws Exception {
@@ -150,7 +155,7 @@ class ManStateDeltaServiceIT {
                 ref + "-A_PBSR.xml", null);
 
         assertThat(Files.readAllLines(service.window(client, "w1", false).orElseThrow()))
-                .containsExactly("MSD|" + client + "|w1", "MND|" + ref + "|ACCP", "END|1");
+                .containsExactly("MSD|" + client + "|w1", "MND|" + ref + "|RJCT", "END|1");
         assertThat(watermarkCount(client)).isEqualTo(1L);
 
         // and nothing is left to flap: the next window is quiet

@@ -93,9 +93,10 @@ class ManStateDeltaIT extends AbstractMrgCrdbIT {
         assertThat(stateOf("MREQ-44A")).isEqualTo("ACCP");
         assertThat(stateOf("MREQ-44B")).isEqualTo("RJCT");
 
-        // the MANDATE has exactly one state, and a rejected AMEND does not un-register it
+        // the MANDATE has exactly one state, and (Sean, 2026-07-26) the latest true response
+        // is the rejection, so that one state is RJCT
         assertThat(watermarks.findDeltaSlice("CLD05", "", SLICE))
-                .containsExactly(new ManStateRow("MND-44", "ACCP"));
+                .containsExactly(new ManStateRow("MND-44", "RJCT"));
     }
 
     /** The resend path has the same grain: one row per mandate, carrying the MANDATE's state. */

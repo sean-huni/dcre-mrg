@@ -18,12 +18,9 @@
 
          Collapsing by picking one entry is wrong whichever entry you pick. The FSM this
          replaces (MSR MandateStateMachine) was a sequential fold over ONE row keyed
-         mandate_ref, and it carried three things no per-entry projection expresses:
-         terminal states are frozen, an active mandate is never regressed by a late or
-         structural leg, and an outcome MEANS something different depending on the
-         action_code it answers. A rejected AMEND is RJCT for that INSTRUCTION while the
-         MANDATE stays ACCP; latest-entry-wins would read that mandate as rejected and stop
-         a live client's collections.
+         mandate_ref, and it carried two things no per-entry projection expresses:
+         terminal states are frozen, and an active mandate is never regressed by a late or
+         structural leg. Latest-entry-wins expresses neither.
 
          The fold is therefore reformulated as ORDER-INDEPENDENT aggregate predicates, which
          is valid because every transition in the FSM is either absorbing or monotone. -->
@@ -45,13 +42,25 @@
             carries pain.012 Sts=CANC outright, which is how Fintegrate cancels a mandate
             unilaterally (D8) and lands on the CREATE instruction's own leg. Without the
             second shape that mandate fell through every arm to PDNG.
-         4. A rejected CREATE means the mandate never existed. A rejected AMEND or CANCEL
-            leaves the mandate as it was, which is why this arm is action_code-scoped: it is
-            the arm that makes latest-entry-wins unnecessary. COALESCE to CREATE covers a
-            spine entry with no action_code. It also covers the MRR B1a dup_in_file loser:
-            its mndt_req_id is NULL, it can never receive a leg reply, and 005 maps its MRV
-            verdict to RJCT, so a mandate whose only entry is that loser reads RJCT here and
-            is not live.
+         4. ANY leg RJCT rejects the MANDATE, whatever action it answered (Sean ruling,
+            2026-07-26; this arm was action_code-scoped until then). MSR's FSM never scoped
+            rejection by action_code: MandateStateMachine.finalLeg (line 48) and
+            structuralLeg (line 37) both return RJCT on event.isReject() BEFORE any
+            action_code is inspected, and ACCP is not terminal, so a rejected AMEND against
+            a live mandate went ACCP to RJCT there too. The scoped arm was therefore a
+            behaviour CHANGE dressed as a faithful port. The rule Sean set is that the
+            latest Fintegrate Tx response is the true response, so a rejection is terminal
+            for the mandate. The arm is absorbing (once any leg rejects, no later entry can
+            un-reject), so it is still order-independent.
+            The A-33 external status-code-to-FSM mapping remains an open BUILD-BLOCKING
+            archaeology item. If Fintegrate later attests that some reason codes reject only
+            the instruction, the extension point is mandate_reason_code.system_action, the
+            same reference-data mechanism arm 1 already uses for MD07/TERMINATE_NOW, NOT
+            action_code: the scope of a rejection is a property of WHY it was rejected, not
+            of which action was being attempted.
+            This arm also covers the MRR B1a dup_in_file loser: its mndt_req_id is NULL, it
+            can never receive a leg reply, and 005 maps its MRV verdict to RJCT, so a
+            mandate whose only entry is that loser reads RJCT here and is not live.
          5/6. bool_or(state IN ('ACCP','EXPIRED')) encodes "never regress an active
             mandate": once any instruction activated it, a later structural leg or a pending
             row cannot pull it back to PDNG. EXPIRED counts as activated because 005 only
@@ -71,46 +80,70 @@
          criticalAmend has no source column on the spine, MSR derived it in Java by diffing
          against the projection row it was about to overwrite, and nothing sets it today.
 
+         KNOWN LIMITATION, accepted and recorded (2026-07-26, with arm 4 unscoped): arm 4
+         sits ABOVE the expiry arm, so a mandate that expired BEFORE a later leg rejection
+         reads RJCT here while the sequential FSM, which freezes terminal states, would have
+         frozen it at EXPIRED and ignored the rejection. Both are terminal and neither is
+         collectable, so the business effect is nil; only the reported code differs. It is
+         recorded rather than fixed because distinguishing the two needs the very ordering
+         the order-independent fold deliberately discards.
+
          reason follows the winning arm rather than being an arbitrary max(): the
          terminating reason first, then the override's, then a terminal leg's, then whatever
-         the mandate carries. no_retry latches across instructions, exactly as the FSM's
-         isNoRetry latched onto the projection row. -->
+         the mandate carries. It is then forced to NULL when the computed state is ACCP
+         (Sean invariant, 2026-07-26: an ACCP mandate has no reason code). Without that the
+         bare max() fallback published a stale code lifted off a sibling instruction that
+         never rejected anything, and a client could not tell a live mandate from one that
+         failed for that reason. That is why the aggregate is wrapped in a subselect: the
+         computed state has to be in scope for the reason expression to test it.
+         no_retry latches across instructions, exactly as the FSM's isNoRetry latched onto
+         the projection row. -->
 
     <changeSet id="007-mandate-current-status" author="dcre" runOnChange="true">
         <createView viewName="mandate_current_status" replaceIfExists="true"><![CDATA[
-            SELECT m.mandate_ref,
-                   max(m.client)                AS client,
-                   max(m.contract_ref)          AS contract_ref,
-                   max(m.debtor_account)        AS debtor_account,
-                   max(m.creditor_account)      AS creditor_account,
-                   max(m.max_collection_amount) AS max_collection_amount,
-                   max(m.start_date)            AS start_date,
-                   max(m.expiry_date)           AS expiry_date,
-                   CASE
-                     WHEN bool_or(rc.system_action = 'TERMINATE_NOW')          THEN 'RJCT'
-                     WHEN max(o.state) IS NOT NULL                             THEN max(o.state)
-                     WHEN bool_or(m.state = 'CANC'
-                                  OR (m.action_code = 'CANCEL' AND m.stage_rank = 4
-                                      AND m.raw_status = 'ACCP'))              THEN 'CANC'
-                     WHEN bool_or(COALESCE(m.action_code, 'CREATE') = 'CREATE'
-                                  AND m.state = 'RJCT')                        THEN 'RJCT'
-                     WHEN bool_or(m.state IN ('ACCP', 'EXPIRED'))
-                          AND max(m.expiry_date) IS NOT NULL
-                          AND max(m.expiry_date) <> ''
-                          AND to_date(max(m.expiry_date), 'YYYYMMDD') < current_date
-                                                                               THEN 'EXPIRED'
-                     WHEN bool_or(m.state IN ('ACCP', 'EXPIRED'))               THEN 'ACCP'
-                     ELSE 'PDNG'
-                   END AS state,
-                   COALESCE(max(m.reason) FILTER (WHERE rc.system_action = 'TERMINATE_NOW'),
-                            max(o.reason),
-                            max(m.reason) FILTER (WHERE m.state IN ('RJCT', 'CANC')),
-                            max(m.reason))                                     AS reason,
-                   bool_or(m.no_retry)                                         AS no_retry
-            FROM mandate_effective_status m
-            LEFT JOIN mandate_override_pick o ON o.mandate_ref = m.mandate_ref
-            LEFT JOIN mandate_reason_code rc ON rc.code = m.reason
-            GROUP BY m.mandate_ref
+            SELECT g.mandate_ref,
+                   g.client,
+                   g.contract_ref,
+                   g.debtor_account,
+                   g.creditor_account,
+                   g.max_collection_amount,
+                   g.start_date,
+                   g.expiry_date,
+                   g.state,
+                   CASE WHEN g.state = 'ACCP' THEN NULL ELSE g.reason END      AS reason,
+                   g.no_retry
+            FROM (SELECT m.mandate_ref,
+                         max(m.client)                AS client,
+                         max(m.contract_ref)          AS contract_ref,
+                         max(m.debtor_account)        AS debtor_account,
+                         max(m.creditor_account)      AS creditor_account,
+                         max(m.max_collection_amount) AS max_collection_amount,
+                         max(m.start_date)            AS start_date,
+                         max(m.expiry_date)           AS expiry_date,
+                         CASE
+                           WHEN bool_or(rc.system_action = 'TERMINATE_NOW')          THEN 'RJCT'
+                           WHEN max(o.state) IS NOT NULL                             THEN max(o.state)
+                           WHEN bool_or(m.state = 'CANC'
+                                        OR (m.action_code = 'CANCEL' AND m.stage_rank = 4
+                                            AND m.raw_status = 'ACCP'))              THEN 'CANC'
+                           WHEN bool_or(m.state = 'RJCT')                            THEN 'RJCT'
+                           WHEN bool_or(m.state IN ('ACCP', 'EXPIRED'))
+                                AND max(m.expiry_date) IS NOT NULL
+                                AND max(m.expiry_date) <> ''
+                                AND to_date(max(m.expiry_date), 'YYYYMMDD') < current_date
+                                                                                     THEN 'EXPIRED'
+                           WHEN bool_or(m.state IN ('ACCP', 'EXPIRED'))               THEN 'ACCP'
+                           ELSE 'PDNG'
+                         END AS state,
+                         COALESCE(max(m.reason) FILTER (WHERE rc.system_action = 'TERMINATE_NOW'),
+                                  max(o.reason),
+                                  max(m.reason) FILTER (WHERE m.state IN ('RJCT', 'CANC')),
+                                  max(m.reason))                                     AS reason,
+                         bool_or(m.no_retry)                                         AS no_retry
+                  FROM mandate_effective_status m
+                  LEFT JOIN mandate_override_pick o ON o.mandate_ref = m.mandate_ref
+                  LEFT JOIN mandate_reason_code rc ON rc.code = m.reason
+                  GROUP BY m.mandate_ref) AS g
         ]]></createView>
     </changeSet>
 

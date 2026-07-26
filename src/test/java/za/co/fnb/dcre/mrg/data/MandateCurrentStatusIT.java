@@ -14,9 +14,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>mandate_current_status is one row per mandate_ref, reformulating MSR's sequential
  * MandateStateMachine fold as order-independent aggregate predicates. Collapsing by
- * picking a single entry is wrong whichever entry you pick, and
- * {@link #anAcceptedCreateThenARejectedAmendReadsAccpNotRjct} is the case that proves it:
- * a rejected AMEND is RJCT for that INSTRUCTION while the MANDATE stays ACCP.</p>
+ * picking a single entry is wrong whichever entry you pick: the collapse is a fold over
+ * ALL of them.</p>
+ *
+ * <p>REJECTION IS MANDATE-SCOPED (Sean ruling, 2026-07-26). MSR's FSM never scoped a
+ * rejection by action_code: MandateStateMachine.finalLeg (line 48) and structuralLeg
+ * (line 37) both return RJCT on isReject() before any action_code is inspected, and ACCP
+ * is not terminal, so a rejected AMEND against a live mandate went ACCP to RJCT there too.
+ * The latest Fintegrate Tx response is the true response, so any leg RJCT is terminal for
+ * the MANDATE.</p>
  */
 class MandateCurrentStatusIT extends AbstractMrgCrdbIT {
 
@@ -37,25 +43,41 @@ class MandateCurrentStatusIT extends AbstractMrgCrdbIT {
     }
 
     /**
-     * THE test of this task. MSR's FSM was a sequential fold keyed on mandate_ref with
-     * no-regression of an active mandate; a rejected AMEND rejects the INSTRUCTION, it does
-     * not un-register the mandate. "Latest entry wins" would read RJCT here and stop the
-     * client's collections on a mandate the debtor authorised.
+     * THE test of this task, INVERTED 2026-07-26. The design note this suite was written
+     * against claimed MSR treated a rejected AMEND as rejecting the INSTRUCTION only, with
+     * the MANDATE staying ACCP. That claim is false about the code: MandateStateMachine
+     * returns RJCT on isReject() before it ever looks at the action, and ACCP is not
+     * terminal, so ACCP to RJCT is exactly what the shipped FSM did. Sean ruled that the
+     * latest Fintegrate Tx response is the true response, so rejection is MANDATE-scoped.
+     * The two grains still disagree by design, which is the point of having both views.
      */
     @Test
-    void anAcceptedCreateThenARejectedAmendReadsAccpNotRjct() {
+    void anAcceptedCreateThenARejectedAmendReadsRjct() {
         seedSpine("CL01", "MND-31", "MREQ-31A");
         seedPbsr("MREQ-31A", "ACCP", null);
         seedInstruction("CL01", "MND-31", "MREQ-31B", "AMEND");
         seedPbsr("MREQ-31B", "RJCT", "MD01");
 
-        // the INSTRUCTION was rejected: that is what mandate_effective_status reports
+        // the CREATE instruction is still ACCP: instruction grain reports per instruction
+        assertThat(stateOf("MREQ-31A")).isEqualTo("ACCP");
         assertThat(stateOf("MREQ-31B")).isEqualTo("RJCT");
-        // the MANDATE is still registered
-        assertThat(currentStateOf("MND-31")).isEqualTo("ACCP");
+        // the MANDATE takes the latest true response: rejected
+        assertThat(currentStateOf("MND-31")).isEqualTo("RJCT");
     }
 
-    /** A rejected CREATE means the mandate never existed: the action_code-scoped arm. */
+    /** The other structural action: a rejected CANCEL is mandate-terminal on the same rule. */
+    @Test
+    void anAcceptedCreateThenARejectedCancelReadsRjct() {
+        seedSpine("CL01", "MND-63", "MREQ-63A");
+        seedPbsr("MREQ-63A", "ACCP", null);
+        seedInstruction("CL01", "MND-63", "MREQ-63B", "CANCEL");
+        seedPbsr("MREQ-63B", "RJCT", "MD01");
+
+        assertThat(stateOf("MREQ-63A")).isEqualTo("ACCP");
+        assertThat(currentStateOf("MND-63")).isEqualTo("RJCT");
+    }
+
+    /** A rejected CREATE means the mandate never existed: the same unscoped absorbing arm. */
     @Test
     void aRejectedCreateReadsRjct() {
         seedSpine("CL01", "MND-32", "MREQ-32");
@@ -120,8 +142,9 @@ class MandateCurrentStatusIT extends AbstractMrgCrdbIT {
 
     /**
      * MD07 (system_action TERMINATE_NOW) terminates from any non-terminal state, so its
-     * presence on ANY instruction wins. Without this arm the mandate would read ACCP: the
-     * carrier here is an AMEND, which the rejected-CREATE arm deliberately ignores.
+     * presence on ANY instruction wins. The arm earns its keep on the REASON as much as on
+     * the state: the rejection arm below would already read RJCT, but only this arm makes
+     * the mandate publish MD07 rather than whatever another leg carried.
      */
     @Test
     void aTerminateNowReasonOnAnyInstructionReadsRjct() {
@@ -178,6 +201,47 @@ class MandateCurrentStatusIT extends AbstractMrgCrdbIT {
 
         assertThat(stateOf("MREQ-38B")).isEqualTo("PDNG");
         assertThat(currentStateOf("MND-38")).isEqualTo("ACCP");
+    }
+
+    /**
+     * ACCP implies a NULL reason (Sean invariant, 2026-07-26). The reason expression used to
+     * bottom out on a bare max(m.reason), so an active mandate published a reason code lifted
+     * off a sibling instruction that never rejected anything: here an AMEND whose only reply is
+     * an ISR carrying MD01, which leaves that instruction PDNG. A client reading a live mandate
+     * with a reason code attached cannot tell it from a mandate that failed for that reason.
+     */
+    @Test
+    void anAccpMandatePublishesNoReason() {
+        seedSpine("CL01", "MND-64", "MREQ-64A");
+        seedPbsr("MREQ-64A", "ACCP", null);
+        seedInstruction("CL01", "MND-64", "MREQ-64B", "AMEND");
+        seedIsr("MREQ-64B", "ACCP", "MD01");
+
+        assertThat(reasonOf("MREQ-64B")).isEqualTo("MD01");
+        assertThat(currentStateOf("MND-64")).isEqualTo("ACCP");
+        assertThat(currentReasonOf("MND-64")).isNull();
+    }
+
+    /**
+     * The column contract is pinned here as well as in MandateEffectiveStatusIT, because the
+     * reason invariant restructures the 007 body into a subselect wrapping the aggregate and a
+     * restructure is exactly how a column list silently drifts. One row per mandate and the
+     * mandate's own state, read through CTV's surface rather than the collapse directly.
+     */
+    @Test
+    void manCtvViewStaysOneRowPerMandateOnItsPinnedColumnContract() {
+        seedSpine("CL01", "MND-65", "MREQ-65A");
+        seedPbsr("MREQ-65A", "ACCP", null);
+        seedInstruction("CL01", "MND-65", "MREQ-65B", "AMEND");
+        seedPbsr("MREQ-65B", "RJCT", "MD01");
+
+        assertThat(rowCountOf("man_ctv_view", "MND-65")).isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT column_name FROM information_schema.columns"
+                + " WHERE table_name = 'man_ctv_view' ORDER BY ordinal_position", String.class))
+                .containsExactly("mandate_ref", "contract_ref", "creditor_account", "state",
+                        "start_date", "expiry_date", "max_collection_amount");
+        assertThat(queryOne("SELECT * FROM man_ctv_view WHERE mandate_ref = 'MND-65'"))
+                .containsEntry("state", "RJCT");
     }
 
     /** CTV's contract survives the re-point: same columns, same values, now one row per mandate. */
