@@ -2,6 +2,7 @@ package za.co.fnb.dcre.mrg.service;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import za.co.fnb.dcre.mrg.config.OnSuspendSweep;
 import za.co.fnb.dcre.mrg.data.repo.CollectionOutcomeDao;
 
 import java.util.List;
@@ -11,7 +12,11 @@ import java.util.List;
  * MandateSuspensionService (SCRUM-91). Split out of the sweep service so the service keeps
  * one responsibility (decide and write) and this keeps the other (count), and so the
  * threshold is read in exactly one place.
+ *
+ * <p>Launch-scoped with the collections DAO it counts over: a report window has no dcre_col
+ * wiring, so it must not declare a bean that needs it (see {@link OnSuspendSweep}).</p>
  */
+@OnSuspendSweep
 @Component
 class SuspensionStreak {
 

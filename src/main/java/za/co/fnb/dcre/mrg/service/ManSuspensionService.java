@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import za.co.fnb.dcre.mrg.config.OnSuspendSweep;
 import za.co.fnb.dcre.mrg.data.repo.ManEffectiveStatusRepo;
 import za.co.fnb.dcre.mrg.data.repo.ManOverrideRepo;
 
@@ -26,7 +27,11 @@ import java.util.Objects;
  * CRDB transaction rejects every further statement, so a retry MUST get a fresh one). The
  * full-identity guarded UPSERT makes the sweep idempotent and resumable: a kill mid-sweep
  * loses no committed suspension and a restart re-writes none of them.</p>
+ *
+ * <p>Launch-scoped: the sweep exists only on the {@code mrgSuspendJob} launch, the one AGT
+ * wires the collections URL onto (see {@link OnSuspendSweep}).</p>
  */
+@OnSuspendSweep
 @Service
 public class ManSuspensionService {
 

@@ -40,7 +40,14 @@ import za.co.fnb.dcre.mrg.data.repo.CollectionOutcomeDao;
  * is still the committed dev default, the context fails at start naming the variable. That
  * keeps {@link #LOCAL_DEV_URL} the single pivot, pinned to the yml by a parity test, rather
  * than removing the default and breaking the clean-clone rule for every local run.</p>
+ *
+ * <p><b>{@link OnSuspendSweep}: these beans are launch-scoped, exactly like the variable.</b>
+ * They used to be unconditional, so a report-window pod built them too and the guard fired
+ * correctly on a pod that was deliberately never given the URL, taking every report window
+ * down (live 2026-07-26). The bean's scope now matches the env's scope; the guard is
+ * unchanged, because the guard is what surfaced this.</p>
  */
+@OnSuspendSweep
 @Configuration(proxyBeanMethods = false)
 public class ColDatasourceConfig {
 

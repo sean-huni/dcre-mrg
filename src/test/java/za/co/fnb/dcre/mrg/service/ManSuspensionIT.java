@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import za.co.fnb.dcre.mrg.data.AbstractMrgCrdbIT;
 import za.co.fnb.dcre.mrg.data.ManColFixture;
 import za.co.fnb.dcre.mrg.data.repo.ManOverrideRepo;
@@ -33,7 +34,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>dcre_col is a REAL second database in the same cluster, reached over the second
  * read-only datasource, so the cross-database constraint is exercised rather than
  * assumed away by co-locating the tables.</p>
+ *
+ * <p>The launch is named explicitly because the sweep chain is launch-scoped: AGT gives
+ * DCRE_COL_DB_URL to the mrgSuspendJob launch only, so the beans that read dcre_col exist only
+ * there too (see OnSuspendSweep). This suite IS that launch.</p>
  */
+@TestPropertySource(properties = "spring.batch.job.name=mrgSuspendJob")
 class ManSuspensionIT extends AbstractMrgCrdbIT {
 
     static final JdbcTemplate COL_JDBC;

@@ -20,6 +20,11 @@ import za.co.fnb.dcre.platform.batch.OutcomeSeamListener;
  * is the clock-window state-delta emitter; the suspension sweep is the writer MRG absorbed
  * from msrSuspendJob (SCRUM-91). AGT selects which one runs via {@code spring.batch.job.name}
  * (default {@code mrgJob}); the ITs launch a specific job explicitly through the JobOperator.
+ *
+ * <p>That selector is also the gate: the sweep job and everything under it are declared only on
+ * the sweep launch ({@link OnSuspendSweep}), because only that launch is given the collections
+ * URL its tasklet chain needs. The report job stays unconditional, so a report window resolves
+ * with no dcre_col wiring present at all.</p>
  */
 @Configuration
 public class MrgJobConfig {
@@ -37,10 +42,11 @@ public class MrgJobConfig {
                 taskletStep("mrgReportStep", repo, tx, tasklet));
     }
 
+    @OnSuspendSweep
     @Bean
     public Job mrgSuspendJob(final JobRepository repo, final PlatformTransactionManager tx,
                              final SuspensionTasklet tasklet, final HeartbeatWriter heartbeatWriter) {
-        return job("mrgSuspendJob", "mrg-suspend", repo, heartbeatWriter,
+        return job(OnSuspendSweep.SUSPEND_JOB, "mrg-suspend", repo, heartbeatWriter,
                 taskletStep("mrgSuspendStep", repo, tx, tasklet));
     }
 

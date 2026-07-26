@@ -5,6 +5,7 @@ import org.springframework.batch.core.step.StepContribution;
 import org.springframework.batch.core.step.tasklet.Tasklet;
 import org.springframework.batch.infrastructure.repeat.RepeatStatus;
 import org.springframework.stereotype.Component;
+import za.co.fnb.dcre.mrg.config.OnSuspendSweep;
 
 /**
  * Thin entry adapter for the suspension sweep (3-tier). All the collections-read and
@@ -14,7 +15,10 @@ import org.springframework.stereotype.Component;
  * status-history full-identity key, and there is no history table here. The override write
  * is keyed on (mandate_ref, source) alone, which is the whole business identity, so a
  * re-run needs no token to stay zero-duplicate.</p>
+ *
+ * <p>Launch-scoped with the sweep it adapts (see {@link OnSuspendSweep}).</p>
  */
+@OnSuspendSweep
 @Component
 public class SuspensionTasklet implements Tasklet {
 

@@ -22,11 +22,27 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the process runs inside a pod ({@code KUBERNETES_SERVICE_HOST}, set by kubelet in every
  * container). Local dev is untouched; a wired cluster is untouched; an unwired cluster
  * fails at context start naming the variable, instead of once per window at query time.</p>
+ *
+ * <p><b>Both directions are pinned deliberately.</b> AGT injects the variable LAUNCH-scoped,
+ * onto the sweep launch only, because {@code Stage.MRG} also serves the report windows and
+ * those never read dcre_col. The beans must therefore be launch-scoped too, or the guard
+ * fires on a pod that never needed the connection: that is exactly what took every report
+ * window down on 2026-07-26. One test per direction, so the next reader cannot "fix" one by
+ * breaking the other.</p>
  */
 class ColDatasourceConfigTest {
 
     /** Any non-blank value; kubelet sets the API server's ClusterIP here. */
     private static final String IN_CLUSTER = "KUBERNETES_SERVICE_HOST=10.96.0.1";
+
+    /** The committed default launch: the clock-window report, which reads dcre_man only. */
+    private static final String REPORT_JOB = "mrgJob";
+
+    /** The launch AGT gives the variable to: the only launch that reads dcre_col. */
+    private static final String SUSPEND_LAUNCH =
+            OnSuspendSweep.JOB_NAME + "=" + OnSuspendSweep.SUSPEND_JOB;
+
+    private static final String REPORT_LAUNCH = OnSuspendSweep.JOB_NAME + "=" + REPORT_JOB;
 
     private static final String WIRED_URL =
             "dcre.col-db-url=jdbc:postgresql://crdb.dcre.svc.cluster.local:26257/dcre_col?sslmode=disable";
@@ -34,16 +50,30 @@ class ColDatasourceConfigTest {
     private final ApplicationContextRunner runner =
             new ApplicationContextRunner().withUserConfiguration(ColDatasourceConfig.class);
 
+    /**
+     * The live regression (2026-07-26, every MRG report window TECH_FAILED one per minute).
+     * A report-window pod is in-cluster and carries no DCRE_COL_DB_URL by design, so an
+     * UNCONDITIONAL col bean makes the guard fire on a pod with no business connecting to
+     * the collections DB. The bean must not exist on this launch at all.
+     */
+    @Test
+    void theReportLaunchInClusterNeedsNoCollectionsUrlAndDeclaresNoColBean() {
+        runner.withPropertyValues(REPORT_LAUNCH, IN_CLUSTER).run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(CollectionOutcomeDao.class);
+        });
+    }
+
     @Test
     void inClusterOnTheDevDefaultFailsAtStartupNamingTheVariable() {
-        runner.withPropertyValues(IN_CLUSTER).run(context -> assertThat(context)
+        runner.withPropertyValues(SUSPEND_LAUNCH, IN_CLUSTER).run(context -> assertThat(context)
                 .getFailure()
                 .hasMessageContaining("DCRE_COL_DB_URL"));
     }
 
     @Test
     void inClusterWithTheUrlWiredStartsNormally() {
-        runner.withPropertyValues(IN_CLUSTER, WIRED_URL).run(context -> {
+        runner.withPropertyValues(SUSPEND_LAUNCH, IN_CLUSTER, WIRED_URL).run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context).hasSingleBean(CollectionOutcomeDao.class);
         });
@@ -53,7 +83,7 @@ class ColDatasourceConfigTest {
     void localDevKeepsTheCommittedDefaultAndBoots() {
         // Clean-clone rule: no .env, no cluster, still boots. The guard must not
         // turn the local inner loop into a mandatory-env chore.
-        runner.run(context -> {
+        runner.withPropertyValues(SUSPEND_LAUNCH).run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context).hasSingleBean(CollectionOutcomeDao.class);
         });
@@ -66,6 +96,15 @@ class ColDatasourceConfigTest {
         // disarm it (dev-credential-banner redaction-guard pattern).
         assertThat(applicationYml())
                 .contains("col-db-url: ${DCRE_COL_DB_URL:" + ColDatasourceConfig.LOCAL_DEV_URL + "}");
+    }
+
+    @Test
+    void theGatedLaunchSelectorIsTheCommittedYmlBinding() {
+        // Same disarm risk as the guard constant above, one level out: the gate matches on
+        // the launch selector, which the yml binds to AGT's DCRE_MRG_JOB_NAME and defaults
+        // to the report job. Rename that binding and a sweep pod would quietly select the
+        // report launch, taking the sweep beans away from the job that needs them.
+        assertThat(applicationYml()).contains("name: ${DCRE_MRG_JOB_NAME:" + REPORT_JOB + "}");
     }
 
     private static String applicationYml() {
