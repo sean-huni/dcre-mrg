@@ -14,5 +14,6 @@
     <include file="db/changelog/2026/07/006-drop-man-ext-status.xml"/>
     <include file="db/changelog/2026/07/007-man-current-status.xml"/>
     <include file="db/changelog/2026/07/008-man-status-history.xml"/>
+    <include file="db/changelog/2026/07/009-drop-mandate-projection.xml"/>
 
 </databaseChangeLog>

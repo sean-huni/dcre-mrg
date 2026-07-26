@@ -8,11 +8,24 @@
     <!-- Shared-core bootstrap guards for dcre_man (house bootstrap-guard rule):
          whichever M-service boots first mints these shapes, MARK_RAN converges
          the rest, and the canonical owners arrive with their services (R-04):
-         mandate projection = MSR (T13), account master consolidation = M11.
+         account master consolidation = M11. The `mandate` projection created below has
+         NO surviving writer: SCRUM-91 deleted MSR and replaced the projection with the
+         MRG-derived mnd_ext_status + mandate_effective_status + mandate_current_status
+         views. The create changeset is APPLIED and therefore immutable, so the table is
+         retired by a guarded drop, in 009-drop-mandate-projection.xml (see below).
          FK relationships are deliberately SHAPE-ONLY (columns + indexes, no DB
          constraints) so guarded pre-creates converge from any service order.
          SHARED-CORE CANON: this file stays byte-equivalent in shape to mrr's
-         copy (copied VERBATIM, changeset ids mrg-prefixed); reviewers diff the copies. -->
+         copy (copied VERBATIM, changeset ids mrg-prefixed); reviewers diff the copies.
+
+         ONE DELIBERATE DIVERGENCE (SCRUM-91, 2026-07-26). The nine sibling copies end with a
+         guarded <svc>-000-drop-mandate-projection changeset that retires the mandate
+         projection created below. MRG's copy does NOT, and must not: MRG's own
+         003-man-ext-status-view still builds man_ext_status with "FROM mandate", so a drop
+         ordered at 000 fails every fresh migration with "relation mandate does not exist".
+         MRG drops the table in 009-drop-mandate-projection.xml instead, ordered last in the
+         master changelog, after 006 has dropped that view. Same guard, same effect, later
+         position. Do NOT "restore symmetry" by copying the drop into this file. -->
 
     <changeSet id="mrg-000-account-type" author="dcre">
         <preConditions onFail="MARK_RAN">
