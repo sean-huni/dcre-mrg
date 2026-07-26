@@ -46,6 +46,10 @@ dcre:
   # sweep (HeartbeatDatasourceConfig pattern: inline SimpleDriverDataSource, never a
   # DataSource bean, so Liquibase/Batch/Spring-Data stay on the primary dcre_man). Moved here
   # verbatim from msr with the sweep (SCRUM-91).
+  # The localhost default is the clean-clone dev target ONLY: ColDatasourceConfig makes it
+  # fatal at startup inside a pod, because nothing injected DCRE_COL_DB_URL and every
+  # in-cluster sweep window died on it (2026-07-26). AGT now sets it on the sweep launch.
+  # Keep this literal in step with ColDatasourceConfig.LOCAL_DEV_URL (parity-tested).
   col-db-url: ${DCRE_COL_DB_URL:jdbc:postgresql://localhost:26257/dcre_col?sslmode=disable}
   col-db-user: ${DCRE_COL_DB_USER:root}
   col-db-password: ${DCRE_COL_DB_PASSWORD:}
