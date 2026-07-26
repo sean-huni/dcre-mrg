@@ -129,9 +129,12 @@
     <!-- Index-backed pick windows, created BEFORE the views that read them. Collections
          learned this the hard way (SCRUM-55, live 2026-07-16): a correlated scan of the
          ext_tx_status stack hung the AGT trigger scan for over 7 minutes on a 12,001-tx
-         parent and permanently wedged it. Each index covers its pick window exactly,
-         (partition key, then the ORDER BY leader descending), so CRDB reads the window in
-         index order instead of sorting the table. This view lands on CTV's hot path, so
+         parent and permanently wedged it. Each index covers its pick window (partition key,
+         then created_at descending), so CRDB reads the window in index order instead of
+         sorting the table. The status-precedence key the pick views now lead on is an
+         EXPRESSION, so it is not indexable here and is not meant to be: it only re-ranks the
+         handful of rows already inside one mandate request's window, which the index has
+         already narrowed. This view lands on CTV's hot path, so
          the indexes go in up front rather than after the first production stall.
          Per-index changesets with indexExists MARK_RAN guards (persistence.md file
          convention): each converges independently on any reachable DB state. -->
@@ -166,19 +169,46 @@
         </createIndex>
     </changeSet>
 
-    <!-- Latest reply per mandate request per leg, one window pass (prg's prg_*_pick
-         shape, minus the emission/legacy arms mandates do not have). created_at DESC
-         picks the newest arrival; response_file DESC is the deterministic tiebreaker for
-         same-timestamp rows, so the pick never flips between reads. The PBSR delayed
-         authentication (a second reply under <stem>-AUTH_PBSR.xml) is exactly this case:
-         both rows persist, the later one wins. -->
+    <!-- Winning reply per mandate request per leg, one window pass (prg's prg_*_pick shape,
+         minus the emission/legacy arms mandates do not have).
+
+         STATUS PRECEDENCE LEADS THE ORDER BY, and it is load-bearing, not a heuristic.
+         created_at is stamped by the DEFAULT now() when a reader INSERTs the row, and the
+         three leg readers are independent concurrent Kubernetes Jobs, so that column records
+         POD COMPLETION ORDER, not the order the bank sent the replies. Nothing else in the
+         row is an ordering: the parser reads no wire timestamp and the reply model carries
+         none. Ranking on created_at alone therefore lets a slow pod decide the truth.
+
+         The PBSR delayed debtor-authentication path deliberately produces TWO files for one
+         mandate (<stem>_PBSR.xml, usually PDNG, then <stem>-AUTH_PBSR.xml carrying the
+         decision). On a live run that misordered 1 of 5 such mandates: the stale PDNG
+         committed later, won the pick, and the mandate read PDNG permanently even though the
+         bank had accepted it, so collections never started for a live customer. The
+         response_file DESC tiebreak made a created_at tie worse rather than safe: it compares
+         "_PBSR.xml" against "-AUTH_PBSR.xml", and '_' (0x5F) sorts above '-' (0x2D), so the
+         STALE non-auth file won by construction.
+
+         PDNG means "not yet decided", so a pending reply can never be the true final answer
+         once a decision for the same mandate request exists. That is domain truth, it is
+         order-independent, it needs no schema change and it invents no wire semantics. The
+         remaining two keys are unchanged and still do their old jobs: created_at DESC among
+         equally-decided rows, then response_file DESC so the pick never flips between reads.
+
+         KNOWN LIMITATION, deliberately not solved here: a bank sending ACCP and then later
+         RJCT leaves BOTH rows decided, so created_at (pod completion order) still arbitrates
+         between them. The real fix is a wire-carried ordering, the pain.012 GrpHdr CreDtTm,
+         which is blocked because that message profile is unattested under open archaeology
+         item A-60. Guessing a format here would encode a fiction, so the gap is recorded
+         instead. -->
 
     <changeSet id="004-mnd-isr-pick" author="dcre" runOnChange="true">
         <createView viewName="mnd_isr_pick" replaceIfExists="true"><![CDATA[
             SELECT u.mndt_req_id, u.mndt_id, u.status, u.reason
             FROM (SELECT r.mndt_req_id, r.mndt_id, r.status, r.reason,
                          row_number() OVER (PARTITION BY r.mndt_req_id
-                                            ORDER BY r.created_at DESC,
+                                            ORDER BY CASE WHEN r.status = 'PDNG' THEN 0
+                                                          ELSE 1 END DESC,
+                                                     r.created_at DESC,
                                                      r.response_file DESC) AS pick_rank
                   FROM man_isr_resp r) AS u
             WHERE u.pick_rank = 1
@@ -190,7 +220,9 @@
             SELECT u.mndt_req_id, u.mndt_id, u.status, u.reason
             FROM (SELECT r.mndt_req_id, r.mndt_id, r.status, r.reason,
                          row_number() OVER (PARTITION BY r.mndt_req_id
-                                            ORDER BY r.created_at DESC,
+                                            ORDER BY CASE WHEN r.status = 'PDNG' THEN 0
+                                                          ELSE 1 END DESC,
+                                                     r.created_at DESC,
                                                      r.response_file DESC) AS pick_rank
                   FROM man_sbsr_resp r) AS u
             WHERE u.pick_rank = 1
@@ -202,7 +234,9 @@
             SELECT u.mndt_req_id, u.mndt_id, u.status, u.reason
             FROM (SELECT r.mndt_req_id, r.mndt_id, r.status, r.reason,
                          row_number() OVER (PARTITION BY r.mndt_req_id
-                                            ORDER BY r.created_at DESC,
+                                            ORDER BY CASE WHEN r.status = 'PDNG' THEN 0
+                                                          ELSE 1 END DESC,
+                                                     r.created_at DESC,
                                                      r.response_file DESC) AS pick_rank
                   FROM man_pbsr_resp r) AS u
             WHERE u.pick_rank = 1

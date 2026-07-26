@@ -99,6 +99,18 @@ public abstract class AbstractMrgCrdbIT {
         ManLegFixture.seedLeg(jdbc, "man_pbsr_resp", mndtReqId, status, reason, responseFile, createdAt);
     }
 
+    /** Any leg, at an explicit arrival time: the misordered-commit shape all three picks share. */
+    protected void seedLegAt(final String table, final String mndtReqId, final String status,
+                             final String reason, final String responseFile, final String createdAt) {
+        ManLegFixture.seedLeg(jdbc, table, mndtReqId, status, reason, responseFile, createdAt);
+    }
+
+    /** The winning reply status a leg pick view yields for one mandate request. */
+    protected String pickStatusOf(final String view, final String mndtReqId) {
+        return jdbc.queryForObject("SELECT status FROM %s WHERE mndt_req_id = ?".formatted(view),
+                String.class, mndtReqId);
+    }
+
     /** The derived state of the entry carrying this mandate request id. */
     protected String stateOf(final String mndtReqId) {
         return jdbc.queryForObject("SELECT state FROM mandate_effective_status"
