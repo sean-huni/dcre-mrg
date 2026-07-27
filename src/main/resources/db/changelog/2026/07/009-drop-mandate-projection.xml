@@ -5,34 +5,25 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!-- SCRUM-91 point of no return: the written mandate PROJECTION is dropped. MSR, its
-         only writer, is deleted in this wave; mnd_ext_status (004), mandate_effective_status
-         (005) and mandate_current_status (007) derive the state the table used to hold, and
-         every other attribute it carried already lives on the MRR request spine.
+    <!-- SCRUM-91 point of no return, RETAINED AS AN APPLIED NO-OP. The written mandate
+         PROJECTION is retired by the shared-core bootstrap now: MRG's 000 carries the
+         identical guarded drop all ten M-services carry, which is what makes the drop safe
+         from any service in any order (nothing serializes the ten migrations, so no copy of
+         it may depend on another service having gone first).
 
-         WHY THIS FILE AND NOT THE 000 SHARED-CORE BOOTSTRAP. The nine sibling M-services
-         carry the identical guarded drop in their own 000-man-core-bootstrap.xml, because a
-         shared-core create must not outlive the shape it mints. MRG cannot: its own
-         003-man-ext-status-view builds man_ext_status with "FROM mandate", so a drop ordered
-         at 000 kills the migration on any fresh database with
+         THIS CHANGESET STAYS because it EXECUTED on the standing cluster and applied
+         changesets are immutable. Its tableExists guard MARK_RANs wherever 000 has already
+         taken the table, which is every reachable database state, so it costs one guard
+         evaluation; deleting the file would orphan a history row to no end.
 
-             Migration failed for changeset db/changelog/2026/07/003-man-reporting.xml
-             relation "mandate" does not exist
+         WHY IT ORIGINALLY LIVED HERE, and why it no longer needs to: MRG's own
+         003-man-ext-status-view built man_ext_status with "FROM mandate", and CockroachDB
+         refuses an un-cascaded drop while a view selects from the table, so a drop ordered at
+         000 killed the migration. SCRUM-91 removed that changeset, so MRG builds no view over
+         the projection at all and the drop belongs where the siblings keep it. Any standing
+         copy of the view is retired by 006, which the master includes ahead of 000.
 
-         (observed 2026-07-26 on the mrg Testcontainers suite). 003 is applied AND runOnChange,
-         so guarding it would re-create the very view 006 drops. The drop therefore lands here,
-         last in MRG's master, after 003 has built man_ext_status and 006 has dropped it again.
-
-         NUMBERING: 007 and 008 are taken (007-man-current-status, 008-man-status-history), so
-         009 is the next free ordinal, and it must sort last for the reason above.
-
-         NOTHING DEPENDS ON THE TABLE AT DROP TIME. man_ext_status, the only view that ever
-         read it, is dropped by 006. mnd_ext_status, mandate_effective_status,
-         mandate_current_status and man_ctv_view read the leg reply tables, the MRR spine and
-         mandate_override only, so CockroachDB has no view dependency to refuse.
-
-         mandate_reason_code is NOT touched: it is reference data, not projection state. The
-         guard makes every reachable database state converge, so a re-run MARK_RANs. -->
+         mandate_reason_code is NOT touched: it is reference data, not projection state. -->
 
     <changeSet id="009-drop-mandate-projection" author="dcre">
         <preConditions onFail="MARK_RAN"><tableExists tableName="mandate"/></preConditions>

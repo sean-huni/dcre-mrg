@@ -8,9 +8,21 @@
     <!-- MRG mandate state-delta reporting tables (dcre_man). PRG clone scoped to
          mandates (plan T14): a report registry (replay-addressable by id), a
          per-mandate delivery ledger (the authority on what state was externally
-         reported, DB-arbitrated auto-guard), a per-mandate watermark (last
-         reported state), and the man_ext_status delta view that exposes the
-         client dimension the frozen mandate projection lacks. -->
+         reported, DB-arbitrated auto-guard), and a per-mandate watermark (last
+         reported state).
+
+         SCRUM-91 REMOVED THE FOURTH CHANGESET, 003-man-ext-status-view. It built
+         man_ext_status over the written mandate projection; mnd_ext_status (004),
+         mandate_effective_status (005) and mandate_current_status (007) supersede it and
+         006 retires it. REMOVING the changeset, rather than guarding or emptying it, is
+         what the cross-service race demands: all ten M-services now drop that projection
+         with an identical un-cascaded guarded drop at 000, nothing serializes their ten
+         migrations, and a view over the table refuses every one of those drops for as long
+         as it exists. Guarding this changeset would not have helped either, because it is
+         runOnChange: editing it re-creates the very view 006 drops, on every migration.
+
+         Liquibase tolerates the orphaned history row a removed changeset leaves behind, and
+         the standing cluster's copy of the view is already retired by 006. -->
 
     <changeSet id="003-man-report" author="dcre">
         <preConditions onFail="MARK_RAN"><not><tableExists tableName="man_report"/></not></preConditions>
@@ -62,22 +74,6 @@
         <!-- Full business identity (client, mandate_ref): the ON CONFLICT target of the
              guarded watermark UPSERT (NEVER UPSERT-on-PK, CRDB resolves that on the PK only). -->
         <addUniqueConstraint tableName="man_watermark" columnNames="client, mandate_ref" constraintName="uq_man_watermark_client_ref"/>
-    </changeSet>
-
-    <changeSet id="003-man-ext-status-view" author="dcre" runOnChange="true">
-        <!-- Delta source: the mandate PROJECTION (000 core, mandate_ref + state) joined to the
-             MRR spine header for the client dimension the frozen projection lacks. R-14
-             (SPEC-MANDATES-FLOW:69): mandate_ref is unique scheme-wide and compounds the client,
-             so client_token is invariant per mandate_ref and DISTINCT collapses the multi-entry
-             (CREATE/AMEND/CANCEL) fan-out to exactly one row per mandate. Mirrors prg's
-             ext_tx_status deriving client from tx_header.client_token. When MSR (T13) later
-             carries client on the projection itself, this view collapses to a direct read. -->
-        <createView viewName="man_ext_status" replaceIfExists="true"><![CDATA[
-            SELECT DISTINCT h.client_token AS client, m.mandate_ref, m.state
-            FROM mandate m
-            JOIN mandate_request_entry e ON e.mandate_ref = m.mandate_ref
-            JOIN mandate_request_header h ON h.arrival_id = e.arrival_id
-        ]]></createView>
     </changeSet>
 
 </databaseChangeLog>

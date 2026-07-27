@@ -10,18 +10,22 @@
          consolidation view. mnd_ext_status (004) plus mandate_effective_status (005)
          supersede it, and ManWatermarkRepo now reads the latter.
 
-         Ordered LAST in the master changelog and shipped in the SAME wave as the repo
-         re-point, so nothing reads a dropped view mid-migration: on a live dcre_man the
-         new views exist (004/005 run first) before this drop executes, and the deployed
-         jar that runs this migration is the one already reading the derived view.
+         ORDERED FIRST IN THE MASTER as of SCRUM-91, ahead of the shared-core bootstrap, and
+         that position is load-bearing. 000 now carries the same un-cascaded guarded drop of
+         the `mandate` projection that all ten M-services carry, and CockroachDB refuses an
+         un-cascaded drop while a view still selects from the table. A database migrated by a
+         jar built between 003 and this changeset still carries the view, so retiring it
+         BEFORE the shared core runs is what lets that state converge instead of failing every
+         migration MRG attempts. Nothing reads the view when it goes: 004/005 and the
+         re-pointed ManWatermarkRepo shipped in the same wave, and MRG's delta has read
+         mandate_current_status since.
+
+         The include position is how this is ordered, NOT a rename: changeset identity is
+         (id, author, FILENAME), so renaming the file would re-run it as a new changeset.
 
          The viewExists guard is what makes every reachable DB state converge: a fresh
-         database never created man_ext_status (003 creates it, so it does, but a database
-         restored past this point has not), and a re-run finds it gone and MARK_RANs.
-
-         003-man-ext-status-view is deliberately NOT edited: applied changesets are
-         immutable, and it is runOnChange, so touching it would re-create the very view
-         this drops on the next migration. -->
+         database never creates man_ext_status at all (SCRUM-91 removed the 003 changeset that
+         built it), and a re-run finds it gone and MARK_RANs. -->
     <changeSet id="006-drop-man-ext-status" author="dcre">
         <preConditions onFail="MARK_RAN"><viewExists viewName="man_ext_status"/></preConditions>
         <dropView viewName="man_ext_status"/>
