@@ -83,6 +83,58 @@ class ManStatusHistoryLegacyIT extends AbstractMrgCrdbIT {
         assertThat(exectype(jdbc, "008-man-status-history")).isEqualTo("EXECUTED");
     }
 
+    /**
+     * The HALF-MIGRATED state (testing.md requires it alongside the legacy end state and the
+     * fresh one). The chain is six changesets and Liquibase commits each one on its own, so
+     * there is no instant at which the six are atomic; MRG migrates at pod start, so a kill
+     * between two of them (eviction, node loss, the chaos gate's SIGKILL) leaves a durable
+     * intermediate. This is the one the changelog itself names: "a kill after the first ALTER
+     * committed". source_leg is ALREADY relaxed and nothing else is done: response_file is
+     * still NOT NULL, report_id is absent, MSR's identity still stands, the derived identity
+     * does not exist.
+     *
+     * <p>It is seeded with NO history rows, which is the harder half of that state and the one
+     * the guards actually claim: every precondition must decide from SCHEMA STATE alone rather
+     * than read the answer out of mrg_databasechangelog. That is not a contrivance, it is the
+     * standing cluster's own situation, where MSR created the table under a DIFFERENT service's
+     * history table and MRG's history starts empty.</p>
+     *
+     * <p>So the chain splits: the create and the source_leg relax MARK_RAN, the other four
+     * EXECUTE, and the database converges on exactly the shape the full-legacy and fresh paths
+     * reach.</p>
+     */
+    @Test
+    void aHalfMigratedTableWithOnlyTheFirstAlterAppliedConverges() throws LiquibaseException {
+        final JdbcTemplate legacy = database("legacy_man_status_half");
+        seedMsrShapedTable(legacy);
+        legacy.execute("ALTER TABLE mandate_status_history ALTER COLUMN source_leg DROP NOT NULL");
+
+        migrate(legacy);
+
+        assertThat(exectype(legacy, "008-man-status-history")).isEqualTo("MARK_RAN");
+        assertThat(exectype(legacy, "008-man-status-history-source-leg-nullable")).isEqualTo("MARK_RAN");
+        assertThat(exectype(legacy, "008-man-status-history-response-file-nullable")).isEqualTo("EXECUTED");
+        assertThat(exectype(legacy, "008-man-status-history-report-id")).isEqualTo("EXECUTED");
+        assertThat(exectype(legacy, "008-drop-man-status-history-msr-identity")).isEqualTo("EXECUTED");
+        assertThat(exectype(legacy, "008-man-status-history-derived-identity")).isEqualTo("EXECUTED");
+
+        assertThat(nullabilityOf(legacy, "source_leg")).isEqualTo("YES");
+        assertThat(nullabilityOf(legacy, "response_file")).isEqualTo("YES");
+        assertThat(nullabilityOf(legacy, "report_id")).isEqualTo("YES");
+        assertThat(constraintCount(legacy, "uq_man_status_history_identity")).isZero();
+        assertThat(constraintCount(legacy, "uq_man_status_history_derived")).isEqualTo(1);
+
+        // the ALTER that survived the kill did not cost MSR's evidence either
+        assertThat(legacy.queryForObject("SELECT source_leg FROM mandate_status_history"
+                + " WHERE mandate_ref = 'LEG-1'", String.class)).isEqualTo("PBSR");
+
+        final UUID reportId = UUID.randomUUID();
+        appendDerived(legacy, reportId);
+        appendDerived(legacy, reportId);
+        assertThat(legacy.queryForObject("SELECT count(*) FROM mandate_status_history"
+                + " WHERE mandate_ref = 'DRV-1'", Integer.class)).isEqualTo(1);
+    }
+
     private JdbcTemplate migratedLegacyDatabase(final String name) throws LiquibaseException {
         final JdbcTemplate legacy = database(name);
         seedMsrShapedTable(legacy);

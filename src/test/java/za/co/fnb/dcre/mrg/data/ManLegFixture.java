@@ -32,7 +32,17 @@ public final class ManLegFixture {
      * Moves an already-seeded mandate to {@code state} by landing a fresh PBSR reply.
      * PBSR is the only leg that can move a mandate off PDNG (the FSM's non-obvious rule:
      * an ISR or SBSR ACCP means the instruction passed that stage, not that the debtor
-     * authenticated). The pick view takes the newest row, so this supersedes any earlier reply.
+     * authenticated).
+     *
+     * <p><b>Newest does NOT win any more.</b> mnd_pbsr_pick leads its ORDER BY on status
+     * precedence ({@code CASE WHEN r.status = 'PDNG' THEN 0 ELSE 1 END DESC}), and only then
+     * created_at DESC, then response_file DESC (004-man-views.xml). So a DECIDED reply landed
+     * here supersedes any earlier reply, decided or pending, but a {@code PDNG} reply landed
+     * over an already-decided one does NOT: the decided row keeps the pick and the mandate
+     * keeps its state. A scenario that needs a mandate to read PDNG must seed it PDNG and
+     * leave it there, never walk it back with {@code advanceTo(jdbc, ref, "PDNG")}. Two
+     * DECIDED replies still arbitrate on created_at, which is pod completion order, and that
+     * limitation is recorded in 004-man-views.xml, not fixed here.</p>
      */
     public static void advanceTo(final JdbcTemplate jdbc, final String mandateRef, final String state) {
         seedLeg(jdbc, "man_pbsr_resp", reqIdOf(mandateRef), state, null,

@@ -13,7 +13,29 @@
          It exists only because the suspension signal (N consecutive failed collections)
          lives in a DIFFERENT database, dcre_col, and a CockroachDB view cannot span
          databases. Everything else is derived. Keep it that way: do not add columns here
-         to cache derivable state. -->
+         to cache derivable state.
+
+         [!CONVENTION-OVERRIDE] Family-suite architectural consistency (engineering.md,
+         "Family consistency beats local cleverness"): a new member of a family-suite copies
+         the family's architecture, and the collections/payments response leg is per-leg
+         readers plus a precedence VIEW with ZERO clock-driven writers, so MRG should run one
+         clock job (the report window), not two. It runs two: the report window AND the
+         suspension writer that feeds this table.
+
+         Reason it is not expressible in the family shape: the suspension signal is N
+         consecutive failed collection attempts, recorded in man_collection_outcome in
+         dcre_col (A-70). CockroachDB views cannot span databases, so no view in dcre_man can
+         read it and no amount of derivation reaches it. This is the MINIMAL deviation the
+         rule allows: one narrow override sink carrying one signal, joined through a pick
+         view, with every other state in the leg still derived. Everything else in the leg
+         matches collections exactly.
+
+         RETIREMENT CONDITION: the deviation disappears the moment that signal is colocated
+         in dcre_man or projected into it (an outbox, a CDC feed, a cross-database replica of
+         man_collection_outcome). At that point the suspension state derives like every other
+         state, mandate_override and its clock-driven writer are deleted, and MRG drops back
+         to the family's one clock job. Nothing else in this changelog is allowed to grow a
+         second reason to keep the writer alive. -->
 
     <changeSet id="005-mandate-override" author="dcre">
         <preConditions onFail="MARK_RAN"><not><tableExists tableName="mandate_override"/></not></preConditions>
