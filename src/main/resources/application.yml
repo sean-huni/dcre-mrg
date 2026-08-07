@@ -40,7 +40,7 @@ dcre:
   agtops-db-url: ${DCRE_AGTOPS_DB_URL:jdbc:postgresql://localhost:26257/agt_ops?sslmode=disable}
   agtops-db-user: ${DCRE_AGTOPS_DB_USER:root}
   agtops-db-password: ${DCRE_AGTOPS_DB_PASSWORD:}
-  exchange-root: ${DCRE_EXCHANGE_ROOT:../../../../../infra/dcre-infra/exchange}
+  exchange-root: ${DCRE_EXCHANGE_ROOT:../../../../../../infra/dcre-infra/exchange}
   amount-scale: ${DCRE_AMOUNT_SCALE:2}
   # Second, READ-ONLY datasource pointed at the collections DB (dcre_col) for the suspension
   # sweep (HeartbeatDatasourceConfig pattern: inline SimpleDriverDataSource, never a
