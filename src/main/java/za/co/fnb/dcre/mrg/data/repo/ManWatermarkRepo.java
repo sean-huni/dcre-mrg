@@ -13,7 +13,7 @@ import java.util.UUID;
  * Per-mandate delta watermark (last externally reported state per mandate) and
  * its delta reads over the DERIVED mandate_current_status view (SCRUM-91; the
  * retired man_ext_status was projection-dressing over the MSR-written mandate
- * table). Mirrors prg's PrgWatermarkRepo: the delta is a bounded keyset slice
+ * table). Mirrors crg's CrgWatermarkRepo: the delta is a bounded keyset slice
  * (resume after the caller's last mandate_ref, "" for the first slice) so a
  * growing mandate population never materialises whole in heap.
  *
@@ -44,7 +44,7 @@ public interface ManWatermarkRepo extends Repository<ManStateRow, UUID> {
     /**
      * Bounded keyset slice of the delta: mandates whose derived state moved past
      * the client's last reported state (or were never reported). state is
-     * view-NOT-NULL (the collapse's CASE has an ELSE arm); the guard mirrors prg
+     * view-NOT-NULL (the collapse's CASE has an ELSE arm); the guard mirrors crg
      * for parity. No DISTINCT: mandate_current_status is already exactly one row
      * per mandate_ref, which is the grain the watermark key demands (see above).
      */

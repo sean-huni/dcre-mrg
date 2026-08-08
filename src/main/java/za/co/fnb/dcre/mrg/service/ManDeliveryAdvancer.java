@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * R-29 second phase (prg-12 honesty): the EMITTED file is the only truth of
+ * R-29 second phase (crg-12 honesty): the EMITTED file is the only truth of
  * what was externally reported, so the advance streams the committed target
  * back and ledgers/watermarks exactly those (mandate_ref, state) tuples in
  * per-slice REQUIRES_NEW transactions (fresh tx per CrdbRetry attempt). A

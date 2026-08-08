@@ -18,12 +18,12 @@ spring:
     username: ${DCRE_DB_USER:root}
     password: ${DCRE_DB_PASSWORD:}
     hikari:
-      # SCRUM-90: mrg-ONLY READ COMMITTED (not fleet-wide), same profile as prg. mrg is a
+      # SCRUM-90: mrg-ONLY READ COMMITTED (not fleet-wide), same profile as crg. mrg is a
       # scheduled per-client report generator whose concurrent windows hit the same uncatchable
-      # 40001 (RETRY_SERIALIZABLE) at the Batch-6 persistent-JobRepository chunk commit as prg.
+      # 40001 (RETRY_SERIALIZABLE) at the Batch-6 persistent-JobRepository chunk commit as crg.
       # READ COMMITTED removes it and mrg's writes are full-identity guarded UPSERTs (watermark
       # ON CONFLICT (client, mandate_ref); ledger partial-unique ON CONFLICT (client, mandate_ref,
-      # state) WHERE manual_ref IS NULL) so zero-dup is preserved. mrg mirrors prg exactly and
+      # state) WHERE manual_ref IS NULL) so zero-dup is preserved. mrg mirrors crg exactly and
       # uses NO cluster_logical_timestamp() / AS OF SYSTEM TIME (its delta read is a plain SELECT
       # over the derived mandate_effective_status view), so it is RC-safe; only ctv/rpt keep the
       # SERIALIZABLE default because they use AS OF SYSTEM TIME, which CRDB allows only there.

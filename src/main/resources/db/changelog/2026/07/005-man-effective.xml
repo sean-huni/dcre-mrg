@@ -37,8 +37,14 @@
          to the family's one clock job. Nothing else in this changelog is allowed to grow a
          second reason to keep the writer alive. -->
 
+    <!-- V1 BASELINE (SCRUM-107, owner directive 2026-08-08). mandate_override and
+         ix_mandate_override_pick have exactly ONE creator, MRG, so neither carries a
+         MARK_RAN guard: on a database created fresh for the direct cut-over they cannot
+         already exist. Guards remain only where a second writer genuinely exists, which in
+         this repo means 000 (the infra seed plus nine sibling services) and 004 (MIX, MSX,
+         MPX and MRV). The views below are runOnChange with replaceIfExists, which is a
+         redefinition idiom rather than a re-run guard, and stays. -->
     <changeSet id="005-mandate-override" author="dcre">
-        <preConditions onFail="MARK_RAN"><not><tableExists tableName="mandate_override"/></not></preConditions>
         <createTable tableName="mandate_override">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -72,9 +78,6 @@
          descending) so CRDB reads the window in index order instead of sorting the table.
          mandate_effective_status is on CTV's hot path, so this goes in up front. -->
     <changeSet id="005-ix-mandate-override-pick" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <not><indexExists tableName="mandate_override" indexName="ix_mandate_override_pick"/></not>
-        </preConditions>
         <createIndex tableName="mandate_override" indexName="ix_mandate_override_pick">
             <column name="mandate_ref"/>
             <column name="effective_from" descending="true"/>
@@ -190,20 +193,10 @@
         ]]></createView>
     </changeSet>
 
-    <!-- CRDB CREATE OR REPLACE VIEW cannot reorder or insert columns, and man_ctv_view is
-         being redefined over a different source. Drop it first under a viewExists guard so
-         the upgrade order is deterministic on every CRDB line. This drops the MSR-era view;
-         man_ctv_view is RECREATED in 007 over mandate_current_status, with an IDENTICAL
-         column list, so CTV needs no code change.
-
-         The definition deliberately does NOT live here any more (D5b): it must read the
-         per-mandate collapse, and that view does not exist yet at this point in the
-         changelog. Keeping a definition here as well would leave man_ctv_view pointing at
-         the INSTRUCTION-grain view whenever this file's runOnChange changesets re-run
-         without 007's also re-running, which is exactly the N-rows-per-mandate defect. -->
-    <changeSet id="005-drop-man-ctv-view-v1" author="dcre">
-        <preConditions onFail="MARK_RAN"><viewExists viewName="man_ctv_view"/></preConditions>
-        <dropView viewName="man_ctv_view"/>
-    </changeSet>
+    <!-- man_ctv_view is NOT defined here (D5b). It must read the per-mandate collapse,
+         mandate_current_status, which does not exist yet at this point in the changelog, so
+         its single definition lives in 007. The guarded drop that used to sit here, undoing
+         an earlier MSR-era definition of the same view, is gone: v1 defines man_ctv_view
+         exactly once, over the right source, and never has a wrong version to retire. -->
 
 </databaseChangeLog>

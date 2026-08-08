@@ -29,16 +29,16 @@ public class ManReportRegistry {
     }
 
     /** Find-or-save on the unique file_name so restarts reuse the row; returns the report id. */
-    public UUID openReport(final String client, final String reportType, final String triggerKind,
+    public UUID openReport(final String client, final String type, final String triggerKind,
                            final String windowKey, final String fileName, final String jobName) {
         return registryTx.execute(s -> reports.findByFileName(fileName)
                 .orElseGet(() -> reports.save(ManReportEntity.of(
-                        client, reportType, triggerKind, windowKey, fileName, jobName)))
+                        client, type, triggerKind, windowKey, fileName, jobName)))
                 .getId());
     }
 
-    /** report_type of a standing artifact, if one is already registered for this file. */
+    /** type of a standing artifact, if one is already registered for this file. */
     public Optional<String> standingType(final String fileName) {
-        return reports.findByFileName(fileName).map(ManReportEntity::getReportType);
+        return reports.findByFileName(fileName).map(ManReportEntity::getType);
     }
 }

@@ -5,15 +5,18 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!-- 006 is included AHEAD of the shared-core bootstrap deliberately (SCRUM-91), and the
-         position is load-bearing. 000 carries the same un-cascaded guarded drop of the
-         `mandate` projection that all ten M-services carry, and CockroachDB refuses an
-         un-cascaded drop while a view still selects from the table. MRG's man_ext_status is
-         the only view that ever did; the changeset that built it is gone, but a database
-         migrated by a jar built between 003 and 006 still carries the view. Retiring it here,
-         before the shared core runs, is what converges that state instead of failing every
-         migration. Everything else keeps its numeric order. -->
-    <include file="db/changelog/2026/07/006-drop-man-ext-status.xml"/>
+    <!-- V1 BASELINE (SCRUM-107, owner directive 2026-08-08). Plain numeric include order.
+
+         The previous master opened with a teardown file (006-drop-man-ext-status) deliberately
+         included AHEAD of the shared core, because the drop of the `mandate` projection at 000
+         was refused by CockroachDB while a view still selected from the table. Both files are
+         gone: v1 never mints the projection and never mints man_ext_status, so there is nothing
+         to retire and nothing to order around. 009-drop-mandate-projection went with them.
+
+         Numbering 006 and 009 are deliberately left unused rather than renumbering 007 and 008.
+         Renumbering would rewrite the filenames, and changeset identity is (id, author,
+         FILENAME): the gaps cost nothing and keep every id stable against the copies MRV holds
+         in its drift fixture. -->
 
     <include file="db/changelog/2026/07/000-man-core-bootstrap.xml"/>
     <include file="db/changelog/2026/07/001-man-spine-bootstrap.xml"/>
@@ -23,6 +26,5 @@
     <include file="db/changelog/2026/07/005-man-effective.xml"/>
     <include file="db/changelog/2026/07/007-man-current-status.xml"/>
     <include file="db/changelog/2026/07/008-man-status-history.xml"/>
-    <include file="db/changelog/2026/07/009-drop-mandate-projection.xml"/>
 
 </databaseChangeLog>
