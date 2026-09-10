@@ -5,11 +5,10 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!-- SCRUM-91: the mandate transition audit trail is KEPT and re-homed in MRG.
-
-         MSR was the SOLE writer of mandate_status_history and its DDL lives in the msr
-         repo, which a later task deletes outright. MRG already owns the derived views, the
-         mandate_override sink and the delta/watermark machinery, so it adopts the table.
+    <!-- ===================================================================================
+         V1 BASELINE (SCRUM-107, owner directive 2026-08-08). The mandate transition audit
+         trail, owned by MRG, which also owns the derived views, the mandate_override sink
+         and the delta/watermark machinery.
 
          Under derivation there is no transition EVENT: state is an aggregate over all legs.
          The transition is the DELTA between man_watermark.last_state (the last state this
@@ -17,28 +16,32 @@
          exactly what a report window already computes, so the append rides the same
          observation that writes the delivery ledger row (see ManAdvanceRecorder).
 
-         Two consequences for the shape:
-         1. source_leg and response_file have NO value under derivation, but the standing
-            cluster holds MSR-written rows carrying real values. Dropping the columns would
-            destroy that audit, so they are RELAXED to nullable and left NULL on derived rows.
-         2. The old uq_man_status_history_identity over (mandate_ref, to_state, response_file)
-            stops guarding anything the moment response_file is NULL: NULLs do not collide in
-            a unique index on CRDB/Postgres. It is replaced by the derived full identity
-            (mandate_ref, to_state, report_id), mirroring man_delivery_ledger's
-            (client, mandate_ref, state), so replaying a report window is a zero-duplicate
-            no-op.
+         THE FINAL SHAPE IS MINTED ONCE, HERE. The previous version of this file reached the
+         same shape in five steps, because the table already stood on a deployed cluster in
+         an older shape: a guarded create, two dropNotNullConstraint changesets each probing
+         nullability through an information_schema sqlCheck, an addColumn for report_id, and
+         a drop-then-add swapping the unique key. All five are gone. A v1 database has no
+         older shape to converge, so the columns are simply declared nullable and the
+         identity key is simply declared correctly, and the sqlCheck preconditions those
+         steps needed disappear with them.
 
-         Both reachable database states must converge: a fresh Testcontainers dcre_man where
-         the table does not exist at all, and the standing cluster where MSR already created
-         it. Every changeset is therefore guarded on the SCHEMA STATE it transforms, never on
-         file order. On a fresh database the create below mints the final shape and the four
-         convergence changesets MARK_RAN; on the standing cluster the create MARK_RANs and
-         the four convergence changesets do the work. -->
+         Two shape decisions survive from that history and are still right:
+
+         1. source_leg and response_file are NULLABLE and stay NULL on every derived row.
+            They carry no value under derivation. They are kept rather than dropped because
+            the audit trail is the one place a future non-derived writer would record leg
+            evidence, and a nullable column costs nothing.
+         2. The identity is (mandate_ref, to_state, report_id), NOT (mandate_ref, to_state,
+            response_file). The latter guards nothing once response_file is NULL, because
+            NULLs do not collide in a unique index on CRDB or Postgres. Keying on the report
+            window mirrors man_delivery_ledger's (client, mandate_ref, state), so replaying a
+            window is a zero-duplicate no-op.
+
+         mandate_status_history has exactly ONE creator, MRG, so no changeset here carries a
+         MARK_RAN guard.
+         =================================================================================== -->
 
     <changeSet id="008-man-status-history" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <not><tableExists tableName="mandate_status_history"/></not>
-        </preConditions>
         <createTable tableName="mandate_status_history">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -48,7 +51,7 @@
                  implicit start state (MandateState javadoc), never a persisted projection state. -->
             <column name="from_state" type="VARCHAR(16)"><constraints nullable="false"/></column>
             <column name="to_state" type="VARCHAR(16)"><constraints nullable="false"/></column>
-            <!-- NULL on every derived row; carries MSR's historic leg evidence on the standing cluster. -->
+            <!-- NULL on every derived row. See the file header. -->
             <column name="source_leg" type="VARCHAR(16)"/>
             <column name="reason_code" type="VARCHAR(8)"/>
             <!-- NULL on every derived row; see source_leg. -->
@@ -65,81 +68,8 @@
         <createIndex tableName="mandate_status_history" indexName="ix_man_status_history_ref">
             <column name="mandate_ref"/>
         </createIndex>
-    </changeSet>
-
-    <!-- Guarded on schema state (not file order), which is what makes a half-migrated
-         database, e.g. a kill after the first ALTER committed, converge on the next run. -->
-    <!-- LIQUIBASE-SQL-EXCEPTION: column NULLABILITY has no typed Liquibase precondition; the
-         "already relaxed" half of the guard can only be probed with sqlCheck against
-         information_schema. The change itself stays a typed tag. Same pattern as
-         000-man-core-bootstrap's seed-emptiness guard. -->
-    <changeSet id="008-man-status-history-source-leg-nullable" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <and>
-                <columnExists tableName="mandate_status_history" columnName="source_leg"/>
-                <sqlCheck expectedResult="1">SELECT count(*) FROM information_schema.columns
-                    WHERE table_schema = current_schema()
-                      AND table_name = 'mandate_status_history'
-                      AND column_name = 'source_leg' AND is_nullable = 'NO'</sqlCheck>
-            </and>
-        </preConditions>
-        <dropNotNullConstraint tableName="mandate_status_history" columnName="source_leg"
-                               columnDataType="VARCHAR(16)"/>
-        <rollback>
-            <addNotNullConstraint tableName="mandate_status_history" columnName="source_leg"
-                                  columnDataType="VARCHAR(16)"/>
-        </rollback>
-    </changeSet>
-
-    <!-- LIQUIBASE-SQL-EXCEPTION: as above, nullability is only probeable via sqlCheck. -->
-    <changeSet id="008-man-status-history-response-file-nullable" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <and>
-                <columnExists tableName="mandate_status_history" columnName="response_file"/>
-                <sqlCheck expectedResult="1">SELECT count(*) FROM information_schema.columns
-                    WHERE table_schema = current_schema()
-                      AND table_name = 'mandate_status_history'
-                      AND column_name = 'response_file' AND is_nullable = 'NO'</sqlCheck>
-            </and>
-        </preConditions>
-        <dropNotNullConstraint tableName="mandate_status_history" columnName="response_file"
-                               columnDataType="VARCHAR(128)"/>
-        <rollback>
-            <addNotNullConstraint tableName="mandate_status_history" columnName="response_file"
-                                  columnDataType="VARCHAR(128)"/>
-        </rollback>
-    </changeSet>
-
-    <changeSet id="008-man-status-history-report-id" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <not><columnExists tableName="mandate_status_history" columnName="report_id"/></not>
-        </preConditions>
-        <addColumn tableName="mandate_status_history">
-            <column name="report_id" type="UUID"/>
-        </addColumn>
-    </changeSet>
-
-    <!-- Drop BEFORE add so a database holding the MSR constraint never carries both. The old
-         key is not merely superseded: with response_file NULL it admits unlimited duplicates. -->
-    <changeSet id="008-drop-man-status-history-msr-identity" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <indexExists indexName="uq_man_status_history_identity"/>
-        </preConditions>
-        <dropUniqueConstraint tableName="mandate_status_history"
-                              constraintName="uq_man_status_history_identity"/>
-        <rollback>
-            <addUniqueConstraint tableName="mandate_status_history"
-                                 columnNames="mandate_ref, to_state, response_file"
-                                 constraintName="uq_man_status_history_identity"/>
-        </rollback>
-    </changeSet>
-
-    <!-- The derived full identity. Historic MSR rows carry report_id NULL and so never
-         collide with each other, which is correct: they are frozen audit, not replay targets. -->
-    <changeSet id="008-man-status-history-derived-identity" author="dcre">
-        <preConditions onFail="MARK_RAN">
-            <not><indexExists indexName="uq_man_status_history_derived"/></not>
-        </preConditions>
+        <!-- The derived full identity, declared with the table rather than swapped in later.
+             See the file header for why it keys on report_id and not response_file. -->
         <addUniqueConstraint tableName="mandate_status_history"
                              columnNames="mandate_ref, to_state, report_id"
                              constraintName="uq_man_status_history_derived"/>

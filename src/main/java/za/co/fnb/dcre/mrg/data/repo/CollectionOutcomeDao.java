@@ -14,7 +14,7 @@ import java.util.List;
  * not. Not a Spring Data repository like its siblings on purpose, because it must run on
  * the second datasource, and a {@code CrudRepository} would be bound to the primary one.</p>
  *
- * <p><b>Read contract (A-70, M10):</b> the PRG-owned {@code man_collection_outcome} view in
+ * <p><b>Read contract (A-70, M10):</b> the CRG-owned {@code man_collection_outcome} view in
  * dcre_col, one row per collection line keyed by {@code mandate_ref}, with
  * {@code is_terminal_failure} = the collection's terminal status classified as
  * {@code TERMINAL_NON_SUCCESS} (RJCT / CANC), ordered by {@code occurred_at}. "Consecutive

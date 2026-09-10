@@ -5,13 +5,24 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!-- SCRUM-91: the mandate response-leg consolidation, the exact mirror of prg's
+    <!-- V1 BASELINE (SCRUM-107, owner directive 2026-08-08).
+
+         THE MARK_RAN GUARDS IN THIS FILE ARE LOAD-BEARING AND STAY, for the same reason as
+         001's: they converge two SERVICES on one fresh database, not a migrated database
+         with a fresh one. man_isr_resp, man_sbsr_resp, man_pbsr_resp and man_validation_log
+         each have two creators, their owning service (MIX, MSX, MPX, MRV) and MRG here, and
+         nothing serializes the ten migrations of the one dcre_man. The three ix_man_*_pick
+         indexes are guarded for the same reason: they sit on tables a sibling may have
+         created first. Contrast 003, 005 and 008, whose objects MRG alone creates and which
+         therefore carry no guard at all in v1.
+
+         The mandate response-leg consolidation, the exact mirror of crg's
          003-reporting ext_tx_status stack. Three per-leg pick views select the latest
          row per mandate request, then one precedence view COALESCEs PBSR > SBSR > ISR.
          There is NO writer: state is derived, which is what R-09 specified before the
          MSR projection drifted in.
 
-         BOOTSTRAP-ORDER GUARD (same contract as prg 003-reporting and this repo's own
+         BOOTSTRAP-ORDER GUARD (same contract as crg 003-reporting and this repo's own
          001-man-spine-bootstrap): MRG is clock-launched and may run on a fresh dcre_man
          before MIX/MSX/MPX have ever executed, so each view source is pre-created here
          with a MARK_RAN tableExists guard carrying the owners' EXACT column sets and
@@ -21,7 +32,7 @@
 
          Pick grain is (mndt_req_id), NOT the collections (emission_id, e2e): a pain.012
          message carries exactly ONE mandate, so there is no ISR fan-out to partition.
-         That also removes the whole legacy-binding/family-fallback apparatus prg needs:
+         That also removes the whole legacy-binding/family-fallback apparatus crg needs:
          the mandate reply correlates on the MRR-minted MndtReqId directly.
 
          PURE PRECEDENCE, no FSM. The "only a PBSR ACCP activates a mandate" rule, the
@@ -169,7 +180,7 @@
         </createIndex>
     </changeSet>
 
-    <!-- Winning reply per mandate request per leg, one window pass (prg's prg_*_pick shape,
+    <!-- Winning reply per mandate request per leg, one window pass (crg's prg_*_pick shape,
          minus the emission/legacy arms mandates do not have).
 
          STATUS PRECEDENCE LEADS THE ORDER BY, and it is load-bearing, not a heuristic.
@@ -246,8 +257,8 @@
     <!-- The precedence view. Rows come from the MRR request spine (R-04: the spine is the
          request-leg authority), never from a reply table, so a mandate request with no
          reply yet still reads, as PDNG at stage_rank 1. The client dimension is
-         mandate_request_header.client_token, exactly as prg's ext_tx_status derives client
-         from tx_header.client_token. stage_rank mirrors prg's: 4 PBSR, 3 SBSR, 2 ISR,
+         mandate_request_header.client_token, exactly as crg's ext_tx_status derives client
+         from tx_header.client_token. stage_rank mirrors crg's: 4 PBSR, 3 SBSR, 2 ISR,
          1 no reply.
 
          The COALESCE ladder bottoms out on the REQUEST-leg verdict before 'PDNG', exactly as

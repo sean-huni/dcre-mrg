@@ -147,21 +147,16 @@
         ]]></createView>
     </changeSet>
 
-    <!-- Re-point CTV. Guarded drop first: on an already-migrated database man_ctv_view
-         exists over the INSTRUCTION-grain view (005 created it there before this defect was
-         found), and a CRDB CREATE OR REPLACE cannot be relied on to swap the source under a
-         granted view. On a fresh database 005 leaves no view at all, so this MARK_RANs and
-         the create below is the first and only definition. -->
-    <changeSet id="007-drop-man-ctv-view-v2" author="dcre">
-        <preConditions onFail="MARK_RAN"><viewExists viewName="man_ctv_view"/></preConditions>
-        <dropView viewName="man_ctv_view"/>
-    </changeSet>
+    <!-- V1 BASELINE (SCRUM-107, owner directive 2026-08-08): man_ctv_view is defined ONCE,
+         here, over the per-mandate collapse. The guarded drop that used to precede this,
+         retiring an earlier definition over the INSTRUCTION-grain view, is gone along with
+         that definition: v1 never creates the wrong version, so there is nothing to swap.
+         The changeset id loses its "-v3" suffix for the same reason.
 
-    <!-- IDENTICAL column list and order to the version CTV reads today (D7). Only the row
-         source changes, from N-rows-per-mandate to exactly one, so MandateProjectionDao,
-         VerdictChain.projectionMandateVerdict and the dcre.ctv.mandate-source toggle are
-         all untouched. The column contract is pinned by a test. -->
-    <changeSet id="007-man-ctv-view-v3" author="dcre" runOnChange="true">
+         The column list and order are the contract CTV reads (D7), pinned by a test, so
+         MandateProjectionDao, VerdictChain.projectionMandateVerdict and the
+         dcre.ctv.mandate-source toggle need no change. -->
+    <changeSet id="007-man-ctv-view" author="dcre" runOnChange="true">
         <createView viewName="man_ctv_view" replaceIfExists="true"><![CDATA[
             SELECT mandate_ref, contract_ref, creditor_account, state,
                    start_date, expiry_date, max_collection_amount
@@ -169,13 +164,12 @@
         ]]></createView>
     </changeSet>
 
-    <!-- SELECT grant to the ctv role (R-10), role-guarded exactly as the superseded
-         005-man-ctv-view-grant was: in a fresh Testcontainers cluster the ctv role does not
-         exist, so MARK_RAN skips the grant while the view is still created; the standing
-         cluster (RBAC provisioned by M9 / rpt 001-rpt-roles) has the role and the grant
-         applies. An unguarded GRANT fails the whole migration on a fresh DB. It re-runs
-         here by design: the changeset identity is (id, author, FILENAME) and DROP VIEW
-         above discarded the grant the 005 copy had made. -->
+    <!-- SELECT grant to the ctv role (R-10). THIS MARK_RAN GUARD IS LOAD-BEARING ON A V1
+         DATABASE and is not the retrofit kind: it converges two environments that both
+         exist from day one, not two points in a migration. A Testcontainers cluster has no
+         ctv role, so the grant is skipped and the view is still created; a provisioned
+         cluster (RBAC from M9 / rpt 001-rpt-roles) has the role and the grant applies. An
+         unguarded GRANT fails the whole migration wherever the role is absent. -->
     <!-- LIQUIBASE-SQL-EXCEPTION: GRANT has no typed Liquibase tag; it is vendor DCL (dbms
          below), not portable DDL. Idempotent by nature: re-granting is a no-op. -->
     <changeSet id="007-man-ctv-view-grant" author="dcre" dbms="cockroachdb,postgresql">

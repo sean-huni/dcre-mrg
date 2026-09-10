@@ -5,13 +5,17 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * SCRUM-91 cutover: the written mandate projection is gone. Every attribute it carried lives
- * on the MRR request spine (which is why the projection was redundant), and its state is
- * derived by mandate_effective_status / mandate_current_status.
+ * The written mandate projection is absent. Every attribute it carried lives on the MRR
+ * request spine (which is why the projection was redundant), and its state is derived by
+ * mandate_effective_status / mandate_current_status.
  *
- * <p>This runs on the REAL Liquibase-migrated schema, so it also proves the drop is ordered
- * safely: the derived views are created before the table goes, and no view is left dangling
- * over a dropped relation (CockroachDB would refuse the drop otherwise).</p>
+ * <p>SCRUM-107: under v1 the projection is never created, so this is no longer a claim about
+ * a DROP being ordered safely. It is a claim about the derived stack standing on its own,
+ * which is why the third test seeds and reads it rather than only counting rows in
+ * information_schema. The fourth test, which asserted that
+ * {@code 009-drop-mandate-projection} appeared in MRG's history, is deleted with the
+ * changeset: v1 has no teardown to record. That the baseline mints no teardown at all is
+ * asserted structurally in {@link ManV1BaselineIT}.</p>
  */
 class ProjectionRemovalIT extends AbstractMrgCrdbIT {
 
@@ -38,13 +42,5 @@ class ProjectionRemovalIT extends AbstractMrgCrdbIT {
         assertThat(currentStateOf("MND-70")).isEqualTo("ACCP");
         assertThat(rowCountOf("mnd_ext_status", "MND-70")).isEqualTo(1);
         assertThat(rowCountOf("man_ctv_view", "MND-70")).isEqualTo(1);
-    }
-
-    /** The drop is a real migration step, not a fixture artefact: MRG's history records it. */
-    @Test
-    void theDropChangesetRanAsPartOfTheMigration() {
-        assertThat(jdbc.queryForObject(
-                "SELECT exectype FROM mrg_databasechangelog WHERE id = '009-drop-mandate-projection'",
-                String.class)).isIn("EXECUTED", "MARK_RAN");
     }
 }

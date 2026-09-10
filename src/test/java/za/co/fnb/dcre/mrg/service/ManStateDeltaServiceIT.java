@@ -125,7 +125,7 @@ class ManStateDeltaServiceIT {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM man_delivery_ledger l"
                         + " JOIN man_report r ON r.id = l.report_id WHERE r.client=?", Long.class, client))
                 .isEqualTo(3L);
-        assertThat(jdbc.queryForObject("SELECT report_type FROM man_report WHERE file_name=?",
+        assertThat(jdbc.queryForObject("SELECT type FROM man_report WHERE file_name=?",
                 String.class, client + "_MSD_w1.txt")).isEqualTo("SCHEDULED");
     }
 
@@ -201,7 +201,7 @@ class ManStateDeltaServiceIT {
         assertThat(hb).isPresent();
         assertThat(Files.readAllLines(hb.get())).containsExactly(
                 "MSD|" + client + "|q1", "HB|" + "DCRE".concat("0".repeat(29)), "END|0");
-        assertThat(jdbc.queryForObject("SELECT report_type FROM man_report WHERE file_name=?",
+        assertThat(jdbc.queryForObject("SELECT type FROM man_report WHERE file_name=?",
                 String.class, client + "_MSD_q1.txt")).isEqualTo("HEARTBEAT");
         assertThat(watermarkCount(client)).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM man_delivery_ledger l"

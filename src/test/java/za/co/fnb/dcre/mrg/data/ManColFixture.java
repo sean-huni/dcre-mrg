@@ -6,15 +6,15 @@ import java.sql.Timestamp;
 import java.time.Instant;
 
 /**
- * A faithful double of the PRG-owned {@code man_collection_outcome} view in dcre_col
+ * A faithful double of the CRG-owned {@code man_collection_outcome} view in dcre_col
  * (A-70), the ONE cross-database signal the mandate view stack cannot derive.
  *
  * <p>Ported from msr's MsrTestTables so the suspension sweep is proved against the same
  * read contract it had before MRG absorbed it: the
  * {@code (mandate_ref, e2e, status, is_terminal_failure, occurred_at)} shape, the
  * classification-driven {@code is_terminal_failure} expression, and the NULL-mandate_ref
- * exclusion, over a tiny backing table rather than PRG's whole projection graph (that
- * join is proven prg-side). Idempotent, so a suite can call it per test.</p>
+ * exclusion, over a tiny backing table rather than CRG's whole projection graph (that
+ * join is proven crg-side). Idempotent, so a suite can call it per test.</p>
  */
 public final class ManColFixture {
 
@@ -41,7 +41,7 @@ public final class ManColFixture {
                 FROM collection_outcome_src s
                 LEFT JOIN prg_status_class sc ON sc.code = s.status
                 WHERE s.mandate_ref IS NOT NULL""");
-        // Classification per prg 004-status-classification.xml: RJCT/CANC are the terminal
+        // Classification per crg 004-status-classification.xml: RJCT/CANC are the terminal
         // non-success codes; ACSC/ACCC are terminal success.
         colJdbc.update("INSERT INTO prg_status_class (code, classification) VALUES "
                 + "('RJCT','TERMINAL_NON_SUCCESS'), ('CANC','TERMINAL_NON_SUCCESS'), "

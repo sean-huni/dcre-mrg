@@ -5,13 +5,23 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
 
-    <!-- BOOTSTRAP-ORDER GUARD (house bootstrap-guard rule, same contract as prg's
+    <!-- V1 BASELINE (SCRUM-107, owner directive 2026-08-08).
+
+         THE MARK_RAN GUARDS IN THIS FILE ARE LOAD-BEARING AND STAY. They are not the
+         retrofit kind that a v1 baseline deletes: they do not converge a migrated database
+         with a fresh one, they converge TWO SERVICES racing on the same fresh database.
+         mandate_request_header and mandate_request_entry have two creators, MRR (the owner,
+         changesets mrr-001-*) and MRG (here). All ten M-services migrate the one dcre_man
+         with ten independent history and lock tables, and nothing serializes them, so
+         whichever runs first wins and the other MARK_RANs. That is true on day one of v1.
+
+         BOOTSTRAP-ORDER GUARD (house bootstrap-guard rule, same contract as crg's
          003-reporting.xml pre-creating the crw_* tables its views read): MRG is
          clock-launched and may run on a fresh dcre_man before MRR (the spine
          owner, R-04) ever executed. The spine is the ROW SOURCE of the whole
          derived view stack (004 mnd_ext_status, 005 mandate_effective_status) and
          supplies the client dimension from mandate_request_header.client_token,
-         exactly as prg's ext_tx_status derives client from
+         exactly as crg's ext_tx_status derives client from
          tx_header.client_token. These pre-creates carry MRR's EXACT column set
          (mrr 001-man-spine.xml), mrg-prefixed changeset ids, MARK_RAN guards:
          whichever service runs first wins, the other side MARK_RANs. Per-service
