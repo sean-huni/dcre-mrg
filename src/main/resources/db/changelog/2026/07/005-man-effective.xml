@@ -44,7 +44,28 @@
          this repo means 000 (the infra seed plus nine sibling services) and 004 (MIX, MSX,
          MPX and MRV). The views below are runOnChange with replaceIfExists, which is a
          redefinition idiom rather than a re-run guard, and stays. -->
+    <!-- RE-RUN GUARD, DELIBERATELY ABSENT ON THE createView CHANGESETS BELOW.
+         Every view changeset here carries replaceIfExists="true", which Liquibase renders
+         as CREATE OR REPLACE VIEW, so it cannot collide with an existing view and needs no
+         onFail="MARK_RAN" precondition. Measured on this database 2026-09-11, the two arms
+         differing only by that attribute: replaceIfExists="true" against an EXISTING view
+         exited 0, and the same statement without it exited 1 with
+         'relation "..." already exists'.
+
+         A guard here would be worse than none. MARK_RAN records a changeset as applied for
+         ever, so on exactly the databases this pass exists to repair, where the object is
+         present but the history row is missing, a not/viewExists guard would freeze the
+         OLD view definition permanently while recording it as run. The re-runnable form
+         refreshes the definition instead, which is the behaviour wanted.
+
+         This is a decision, not an omission: if you are counting changesets against
+         preconditions, these are the difference. -->
+
     <changeSet id="005-mandate-override" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="mandate_override"/></not>
+        </preConditions>
+        
         <createTable tableName="mandate_override">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
@@ -78,6 +99,10 @@
          descending) so CRDB reads the window in index order instead of sorting the table.
          mandate_effective_status is on CTV's hot path, so this goes in up front. -->
     <changeSet id="005-ix-mandate-override-pick" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><indexExists tableName="mandate_override" indexName="ix_mandate_override_pick"/></not>
+        </preConditions>
+        
         <createIndex tableName="mandate_override" indexName="ix_mandate_override_pick">
             <column name="mandate_ref"/>
             <column name="effective_from" descending="true"/>

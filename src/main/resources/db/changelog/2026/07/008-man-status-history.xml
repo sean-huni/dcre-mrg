@@ -42,6 +42,10 @@
          =================================================================================== -->
 
     <changeSet id="008-man-status-history" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <not><tableExists tableName="mandate_status_history"/></not>
+        </preConditions>
+        
         <createTable tableName="mandate_status_history">
             <column name="id" type="UUID" defaultValueComputed="gen_random_uuid()">
                 <constraints primaryKey="true" nullable="false"/>
