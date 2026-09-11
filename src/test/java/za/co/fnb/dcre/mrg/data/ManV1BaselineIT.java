@@ -74,10 +74,20 @@ class ManV1BaselineIT extends AbstractMrgCrdbIT {
      * MARK_RAN here would mean a precondition fired with no second writer in sight, which is
      * either a dead guard or, worse, a create that failed and was swallowed.
      *
-     * <p>The one exception is the CTV grant, and it is named rather than pattern-matched so
-     * that a NEW conditional changeset cannot join the exemption silently. That guard is
-     * load-bearing on a v1 database for a reason unrelated to migration: a Testcontainers
-     * cluster has no ctv role, a provisioned cluster does.</p>
+     * <p>Two changesets are exempt, and both are NAMED rather than pattern-matched so that a
+     * new conditional changeset cannot join the exemption silently.</p>
+     *
+     * <ul>
+     *   <li>{@code 007-man-ctv-view-grant} is load-bearing on a v1 database for a reason
+     *       unrelated to migration: a Testcontainers cluster has no ctv role, a provisioned
+     *       cluster does.</li>
+     *   <li>{@code mrg-v2-report-type-rename} repairs a live database whose man_report was
+     *       created before the report_type to type rename and then had the create marked as
+     *       applied by a tableExists guard. On a fresh database the column is already named
+     *       type, so its columnExists precondition fails and MARK_RAN is the CORRECT outcome:
+     *       an EXECUTED rename here would mean the baseline had started minting the stale
+     *       spelling again.</li>
+     * </ul>
      */
     @Test
     void everyChangesetExecutesOnADatabaseWithNoOtherWriter() throws LiquibaseException {
@@ -88,7 +98,8 @@ class ManV1BaselineIT extends AbstractMrgCrdbIT {
         final List<String> markRan = fresh.queryForList(
                 "SELECT id FROM mrg_databasechangelog WHERE exectype = 'MARK_RAN' ORDER BY id",
                 String.class);
-        assertThat(markRan).containsExactly("007-man-ctv-view-grant");
+        assertThat(markRan)
+                .containsExactly("007-man-ctv-view-grant", "mrg-v2-report-type-rename");
     }
 
     /**

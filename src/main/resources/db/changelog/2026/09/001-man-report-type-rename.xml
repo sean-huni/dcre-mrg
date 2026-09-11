@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!-- ============================================================================
+         REPAIR of a LIVE schema drift, measured on kind-dcre-dev 2026-09-11.
+
+         MRG died at startup on a column this changelog says it creates:
+
+           Caused by: org.postgresql.util.PSQLException:
+             ERROR: column "man_report.type" does not exist
+
+         The changelog is right and the database is stale. 2026/07/003-man-reporting.xml
+         declares the column as `type`, ManReportEntity maps `type`, and the test suite
+         expects `type`. The live table carries `report_type`. Measured live column list:
+
+           dcre_man.man_report:
+             id, client, report_type, trigger_kind, window_key, file_name, job_name,
+             created_at
+
+         WHY THE MIGRATION REPORTED SUCCESS WHILE THE SCHEMA WAS WRONG. The
+         003-man-report changeset gained a re-run guard,
+         onFail="MARK_RAN" over not/tableExists man_report, after that table already
+         stood in its PRE-RENAME shape. A tableExists guard asks whether the NAME is
+         taken; it cannot ask whether the SHAPE matches. So on a database holding the
+         old table the createTable was recorded as applied WITHOUT running: a loud
+         "relation already exists" became a silent wrong schema. Liquibase exited
+         green, the history row now claims the create ran, and nothing will ever
+         revisit it. That is what makes the drift permanent rather than transient, and
+         it is why the repair has to be a separate changeset rather than an edit to
+         the create.
+
+         The changeset below converges the two reachable states and is the only thing
+         that distinguishes them:
+
+           stale database: report_type is present, the precondition PASSES, the
+                           rename RUNS, and the column becomes type.
+           fresh database: the column was created as type, the precondition FAILS,
+                           and MARK_RAN records the changeset as applied without
+                           running it.
+
+         The fresh case is therefore a SECOND expected MARK_RAN on a database with no
+         other writer, and ManV1BaselineIT names it rather than pattern-matching it,
+         so a future conditional changeset still cannot join that exemption silently.
+
+         Verified on this cluster: CockroachDB accepts
+         ALTER TABLE x RENAME COLUMN a TO b.
+         ============================================================================ -->
+
+    <changeSet id="mrg-v2-report-type-rename" author="dcre">
+        <preConditions onFail="MARK_RAN">
+            <columnExists tableName="man_report" columnName="report_type"/>
+        </preConditions>
+        <renameColumn tableName="man_report" oldColumnName="report_type" newColumnName="type"/>
+        <rollback>
+            <renameColumn tableName="man_report" oldColumnName="type" newColumnName="report_type"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

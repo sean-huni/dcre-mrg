@@ -27,4 +27,11 @@
     <include file="db/changelog/2026/07/007-man-current-status.xml"/>
     <include file="db/changelog/2026/07/008-man-status-history.xml"/>
 
+    <!-- 2026/09 is LAST and must stay last: it repairs a shape 2026/07 created, so it
+         resolves a table an earlier month already minted. Numbering restarts at 001
+         inside the new month directory; changeset identity is (id, author, FILENAME)
+         and the filename carries the path, so nothing collides with the 006/009 gaps
+         deliberately left in 2026/07. -->
+    <include file="db/changelog/2026/09/001-man-report-type-rename.xml"/>
+
 </databaseChangeLog>
