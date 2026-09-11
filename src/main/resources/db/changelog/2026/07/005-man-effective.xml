@@ -62,6 +62,14 @@
          preconditions, these are the difference. -->
 
     <changeSet id="005-mandate-override" author="dcre">
+        <!-- A-82: this changeset gained a re-run guard AFTER it had already been applied,
+             which changes the enclosing checksum without changing one byte of the DDL
+             below. ANY rather than a pinned value: kind-dcre-dev stored 9:badd09a2b1c7fcadef9fbe6cbf9a1445,
+             and every environment that migrated at a different time holds a different
+             one, so a pin is correct on exactly one database and silently wrong on the
+             rest. The preConditions block is what keeps the re-run safe; the checksum
+             is not load-bearing here. Same call, same reason, as prr 002-batch-metadata. -->
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <not><tableExists tableName="mandate_override"/></not>
         </preConditions>
@@ -99,6 +107,14 @@
          descending) so CRDB reads the window in index order instead of sorting the table.
          mandate_effective_status is on CTV's hot path, so this goes in up front. -->
     <changeSet id="005-ix-mandate-override-pick" author="dcre">
+        <!-- A-82: this changeset gained a re-run guard AFTER it had already been applied,
+             which changes the enclosing checksum without changing one byte of the DDL
+             below. ANY rather than a pinned value: kind-dcre-dev stored 9:2a3b61209970683db5b8d0fa40e3e943,
+             and every environment that migrated at a different time holds a different
+             one, so a pin is correct on exactly one database and silently wrong on the
+             rest. The preConditions block is what keeps the re-run safe; the checksum
+             is not load-bearing here. Same call, same reason, as prr 002-batch-metadata. -->
+        <validCheckSum>ANY</validCheckSum>
         <preConditions onFail="MARK_RAN">
             <not><indexExists tableName="mandate_override" indexName="ix_mandate_override_pick"/></not>
         </preConditions>
