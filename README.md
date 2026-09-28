@@ -1,8 +1,12 @@
 # dcre-mrg
 
+> Part of the DCRE fleet. For the fleet map, the rulings and the diagrams that specify every stage, start at the [DCRE design register](https://github.com/sean-huni/dcre-design-register); the complete list of live repositories is its [Repositories](https://github.com/sean-huni/dcre-design-register#repositories) table.
+
 Mandates Report Generator: the clock-launched end of the DCRE mandates response flow. MRG owns the derived mandate state views in `dcre_man`, emits one mandate state-delta report per client per clock window to OnHost, and runs the suspension sweep that turns a streak of failed collections into a `SUSPENDED` override.
 
 ## What it does
+
+**Position in the fleet.** Stage `MRG`, mandates family, RES leg, clock-launched. MRG is in no route DAG: AGT's `RouteDags` holds the mandates response route (`FINT_RESP_MAN`) as the three token-picked leg readers only, and MRG runs from two AGT clocks instead, `MrgScheduler` (one report window per mandate-capable client, `AGT_MAN_CLIENTS`) and `MrgSuspendScheduler` (one global suspension sweep per window). Upstream, through the tables it reads: `MIX`, `MSX` and `MPX` (the leg replies), `MRR` (the request spine), `MRV` (`man_validation_log`) and, for the sweep only, CRG's `man_collection_outcome` view in `dcre_col`. Downstream: OnHost, via the `onhost-resp-man/out` report file; CTV's collections mandate gate reads MRG's `man_ctv_view` (per AGT's `ctv-mandate-source` configuration, checked 2026-09-28). Diagram sheet: `dcre-mandates-res` in the design register.
 
 MRG ships two Spring Batch jobs, each a single tasklet step, and AGT picks one per launch through `spring.batch.job.name` (bound to `DCRE_MRG_JOB_NAME`, default `mrgJob`).
 
@@ -31,6 +35,8 @@ Spring Boot 4.1.0 / Spring Batch 6 (metadata DDL is Spring Batch 6.0.4) / Java 2
 - **Outcome seam and heartbeat.** Each job carries platform-batch `OutcomeSeamListener` (writes `BUSINESS_ACCEPTED` on `COMPLETED`, named by `JOB_NAME` or `local-mrg-<executionId>`) and `HeartbeatWriter`. `BatchMetaConfig` abandons stale `MRG_BATCH_` executions before the job runner fires (A-39a).
 
 ### Data
+
+Database today: the shared mandates database `dcre_man` (primary datasource `DCRE_DB_URL`, `DCRE_DB_USER`, `DCRE_DB_PASSWORD`); `agt_ops` for the platform-batch heartbeat (`DCRE_AGTOPS_DB_*`); and, for `mrgSuspendJob` only, a read-only `dcre_col` datasource (`DCRE_COL_DB_URL`, `DCRE_COL_DB_USER`, `DCRE_COL_DB_PASSWORD`). MRG performs no `spine_state` transition; it pre-creates the spine tables but never writes their rows.
 
 Liquibase owns the schema in the shared `dcre_man` (`db/changelog/db.changelog-master.xml`, calendar layout `2026/07/`), with per-service history tables `mrg_databasechangelog` / `mrg_databasechangeloglock`. The changelog is a v1 baseline (SCRUM-107). `MARK_RAN` guards appear only on objects that a second writer can create first on a fresh database; objects MRG alone creates carry none.
 
@@ -77,10 +83,10 @@ java -jar build/libs/mrg-2.0.jar \
 
 # 4) The suspension sweep
 DCRE_MRG_JOB_NAME=mrgSuspendJob java -jar build/libs/mrg-2.0.jar \
-  'sweep=<token>,java.lang.String,true'
+  'window=<window-key>,java.lang.String,true'
 ```
 
-Optional report parameters (non-identifying): `resend=true`, or `report.type=REPLAY` with `report.id=<uuid>`.
+Optional report parameters (non-identifying): `resend=true`, or `report.type=REPLAY` with `report.id=<uuid>`. `mrgSuspendJob` reads no parameter of its own; the identifying `window` exists only so each window starts a new job instance, which is how AGT launches it.
 
 ## Configuration
 
@@ -110,10 +116,11 @@ Fixed in `application.yml`: Batch table prefix `MRG_BATCH_`, Liquibase history t
 ## Testing
 
 ```bash
-./gradlew test   # needs Docker
+./gradlew test   # needs Docker; runs JUnit, Testcontainers ITs and the Cucumber suite
+./gradlew test --tests '*ManSuspensionIT'   # one suite
 ```
 
-Suites run against Testcontainers CockroachDB `v26.2.3` with the real Liquibase-migrated schema; state is reached by seeding leg replies, never by writing a state.
+Suites run against Testcontainers CockroachDB, image pinned at `cockroachdb/cockroach:v26.2.3` (`AbstractMrgCrdbIT`, `MrgJobTest`, `ManStateDeltaServiceIT`, `CucumberSpringConfig`), with the real Liquibase-migrated schema; state is reached by seeding leg replies, never by writing a state.
 
 - `MrgJobTest`: the real `mrgJob` through `JobOperator`; a window emits the state-delta report, and a client with no configured exchange directory fails closed.
 - `ManStateDeltaServiceIT`, `ManStateDeltaIT`: delta per window, heartbeat, single-flip, replay by report id, kill-resume advance from the emitted file, per-mandate grain.
@@ -132,7 +139,7 @@ docker build -t dcre-mrg:<version> .
 kind load docker-image --name dcre-dev dcre-mrg:<version>
 ```
 
-The image is `eclipse-temurin:25-jre-alpine` running `build/libs/mrg-2.0.jar`. AGT launches MRG as an ephemeral K8s Job on a clock: a report launch per client window, and a sweep launch with `DCRE_MRG_JOB_NAME=mrgSuspendJob` and `DCRE_COL_DB_URL` injected on that launch only. Releases are digits-only 3-component SemVer tags, uniform across the fleet.
+The image is `eclipse-temurin:25-jre-alpine` running `build/libs/mrg-2.0.jar`. AGT launches MRG as an ephemeral K8s Job on a clock, in the mandates flow namespace (`AGT_NAMESPACE_MAN`, default `dcre-man`), with the image from `AGT_MRG_IMAGE` (empty default, which leaves MRG launch-disabled). Report windows: every `AGT_MRG_INTERVAL_SECONDS` (default 60) per client token seen in AGT's arrivals that is also listed in `AGT_MAN_CLIENTS` (default `FNBCC01,FNBCC02,FNBRF01`), args `client=<CLIENT>` and `window=w<n>`. Suspension sweep: every `AGT_MRG_SUSPEND_INTERVAL_SECONDS` (default 60), arg `window=w<n>`, with `DCRE_MRG_JOB_NAME=mrgSuspendJob` and `DCRE_COL_DB_URL` (AGT's collections `AGT_SERVICE_DB_URL`) injected on that launch only. Every launch also receives `DCRE_DB_URL` from `AGT_MAN_SERVICE_DB_URL`, `DCRE_EXCHANGE_ROOT`, `JOB_NAME` and the `agt_ops` heartbeat URL (read from AGT on origin/dev, checked 2026-09-28). Image versions are set fleet-wide by dcre-infra `scripts/switch-version.sh` (mandates stages from the 2.3 release line, checked 2026-09-28); the cluster itself is defined in dcre-infra. Releases are digits-only 3-component SemVer tags, uniform across the fleet.
 
 ## Related repositories
 
